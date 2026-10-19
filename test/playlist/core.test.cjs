@@ -13,7 +13,7 @@ test('provided Jockie fields and expiry; reject queue',()=>{
 });
 function fixture(initial=[]){
  let uris=[...initial],snapshot=0;
- const api={snapshot:async()=>({uris:[...uris],snapshot:String(snapshot)}),change:async(action,id,count)=>{
+ const api={track:async id=>({id,name:'Song',artists:[{name:'Band'}],duration_ms:200000}),snapshot:async()=>({uris:[...uris],tracks:uris.map(uri=>({id:uri.split(':').at(-1),uri,name:'Song',artists:[{name:'Band'}],duration_ms:200000})),snapshot:String(snapshot)}),change:async(action,id,count)=>{
  if(action==='add')uris.push(...Array(count).fill(`spotify:track:${id}`));else uris=uris.filter(u=>u!==`spotify:track:${id}`);
  return {snapshot_id:String(++snapshot)};}};
  const state={};return {api,state,editor:new PlaylistEditor(api,state,()=>{}),external:()=>snapshot++};

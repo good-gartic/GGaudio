@@ -25,23 +25,34 @@ export class Spotify {
     // Retry reads if another client edits the playlist while we paginate it.
     for (let attempt = 0; attempt < 3; attempt++) {
       const first = await this.request(`/playlists/${this.playlistId}`);
-      const uris = [];
+      const uris = [], tracks = [];
       let offset = 0;
       while (true) {
         const page = await this.request(`/playlists/${this.playlistId}/items?limit=50&offset=${offset}`);
-        for (const row of page.items) uris.push((row.item || row.track)?.uri || null);
+        for (const row of page.items) {
+          const track=row.item || row.track;
+          uris.push(track?.uri || null);
+          if(track && !track.is_local && track.type!=='episode')tracks.push(track);
+        }
         if (!page.next) break;
         offset += page.items.length;
         if (!page.items.length) throw Error('Spotify returned invalid pagination.');
       }
       const last = await this.request(`/playlists/${this.playlistId}`);
-      if (first.snapshot_id === last.snapshot_id) return {uris, snapshot:last.snapshot_id};
+      if (first.snapshot_id === last.snapshot_id) return {uris, tracks, snapshot:last.snapshot_id};
     }
     throw Error('Playlist is being edited elsewhere. Try again in a moment.');
   }
   async search(query) {
     const result = await this.request(`/search?${new URLSearchParams({q:query,type:'track',limit:'10'})}`);
     return result.tracks?.items || [];
+  }
+  async track(id) {
+    if(!/^[A-Za-z0-9]{22}$/.test(id))throw Error('Invalid Spotify track ID.');
+    const track=await this.request(`/tracks/${id}`);
+    if(!track?.id || !track.name || !track.artists?.length || !Number.isFinite(track.duration_ms) || track.is_local || track.type==='episode')
+      throw Error('Spotify track metadata is unavailable; nothing changed. Try again later.');
+    return track;
   }
   async playlistTracks() {
     const tracks = [];

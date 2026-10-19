@@ -9,13 +9,16 @@ process.env.SPOTIFY_DATA_DIR=dir;
 const {installPlaylist}=require('../../dist/playlist/install.js');
 const {Spotify}=require('../../dist/playlist/spotify.js');
 const {Events}=require('discord.js');
+const originalTrack=Spotify.prototype.track;
+test.before(()=>{Spotify.prototype.track=async id=>({id,name:'Song',artists:[{name:'Band'}],duration_ms:200000});});
+test.after(()=>{Spotify.prototype.track=originalTrack;});
 test.after(()=>rmSync(dir,{recursive:true,force:true}));
 function setup(){Object.assign(process.env,{SPOTIFY_PLAYLIST_ENABLED:'true',GUILD_ID:'guild',SPOTIFY_CLIENT_ID:'client',SPOTIFY_PLAYLIST_ID:'6MQbJRLZAdJU8vK7DPbjb9',PLAYLIST_CHANNEL_ID:'playlist',PLAYLIST_CHANNEL_IDS:'',JOCKIE_CHANNEL_ID:'jockie',JOCKIE_CHANNEL_IDS:'',JOCKIE_BOT_IDS:'bot'});}
 test('disabled adds no listeners',()=>{
  process.env.SPOTIFY_PLAYLIST_ENABLED='false';const client=new EventEmitter();installPlaylist(client);assert.equal(client.eventNames().length,0);
 });
 test('upserts own command and preserves existing listeners',async()=>{
- setup();const original=Spotify.prototype.snapshot;Spotify.prototype.snapshot=async()=>({uris:[],snapshot:'1'});
+ setup();const original=Spotify.prototype.snapshot;Spotify.prototype.snapshot=async()=>({uris:[],tracks:[],snapshot:'1'});
  try{const client=new EventEmitter(),calls=[];const old=()=>{};client.on(Events.MessageCreate,old);client.application={commands:{create:async(...args)=>calls.push(args),set:()=>{throw Error('bulk replacement forbidden');}}};installPlaylist(client);
  await client.listeners(Events.ClientReady)[0](client);
  assert.equal(calls.length,1);assert.equal(calls[0][0].name,'playlist');assert.ok(client.listeners(Events.MessageCreate).includes(old));
@@ -29,7 +32,7 @@ for(const metadataOnly of [false,true,'title-only','unstructured','video-title']
  setup();process.env.PLAYLIST_CHANNEL_IDS=' voice, music, ,voice ';
  const originals={snapshot:Spotify.prototype.snapshot,search:Spotify.prototype.search,change:Spotify.prototype.change};
  const id='0JhdTOZUtvSRkBpzEyJD3X';let writes=0;
- Spotify.prototype.snapshot=async()=>({uris:[],snapshot:'1'});
+ Spotify.prototype.snapshot=async()=>({uris:[],tracks:[],snapshot:'1'});
  Spotify.prototype.search=async()=>[{id,name:metadataOnly==='unstructured'?'Monster Mash':metadataOnly==='video-title'?"Halloween at Freddy's":metadataOnly==='title-only'?'Toccata and Fugue in D Minor':metadataOnly?'Mummy':'Ghost Town',artists:[{name:metadataOnly==='unstructured'?'Bobby \"Boris\" Pickett':metadataOnly==='video-title'?'TryHardNinja':metadataOnly?'GRAVEYARD TRAIN':'Beware Of Darkness'}],duration_ms:metadataOnly?200000:264000,type:'track'}];
  Spotify.prototype.change=async()=>{writes++;return {snapshot_id:'2'};};
  try{
@@ -53,7 +56,7 @@ test('messages and private slash commands share the channel and guild allowlist'
  setup();process.env.PLAYLIST_CHANNEL_IDS=' voice, music, ,voice,playlist ';
  const originals={snapshot:Spotify.prototype.snapshot,change:Spotify.prototype.change};
  const id='0JhdTOZUtvSRkBpzEyJD3X';let writes=0;
- Spotify.prototype.snapshot=async()=>({uris:[],snapshot:'1'});
+ Spotify.prototype.snapshot=async()=>({uris:[],tracks:[],snapshot:'1'});
  Spotify.prototype.change=async()=>{writes++;return {snapshot_id:'2'};};
  try{
   const client=new EventEmitter();client.application={commands:{create:async()=>{}}};
@@ -82,7 +85,7 @@ test('messages and private slash commands share the channel and guild allowlist'
 test('legacy single-channel configuration works without the optional list',async()=>{
  setup();delete process.env.PLAYLIST_CHANNEL_IDS;
  const original=Spotify.prototype.snapshot;
- Spotify.prototype.snapshot=async()=>({uris:[],snapshot:'1'});
+ Spotify.prototype.snapshot=async()=>({uris:[],tracks:[],snapshot:'1'});
  try{
   const client=new EventEmitter();client.application={commands:{create:async()=>{}}};
   installPlaylist(client);await client.listeners(Events.ClientReady)[0](client);
@@ -98,7 +101,7 @@ test('legacy single-channel configuration works without the optional list',async
 test('bare prefix and private slash recover the same pre-startup announcement as a reply',async()=>{
  setup();const original={snapshot:Spotify.prototype.snapshot,search:Spotify.prototype.search};
  const reference={id:'before-startup',guildId:'guild',channelId:'jockie',author:{id:'bot',bot:true},createdTimestamp:Date.now()-10000,content:'Started playing\nPlaying: GRAVEYARD TRAIN - Mummy.mp4\nLength: 03:20'};
- Spotify.prototype.snapshot=async()=>({uris:[],snapshot:'1'});
+ Spotify.prototype.snapshot=async()=>({uris:[],tracks:[],snapshot:'1'});
  Spotify.prototype.search=async()=>[{id:'0JhdTOZUtvSRkBpzEyJD3X',name:'Mummy',artists:[{name:'GRAVEYARD TRAIN'}],duration_ms:200000,type:'track'}];
  try{
   const client=new EventEmitter();client.application={commands:{create:async()=>{}}};client.channels={fetch:async()=>({guildId:'guild',messages:{fetch:async()=>new Map([[reference.id,reference]])}})};

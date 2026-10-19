@@ -5,6 +5,7 @@ import {Events, SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuild
 import {trackIds, announcement, PlaylistEditor} from './core.js';
 import {load, save} from './store.js';
 import {Spotify} from './spotify.js';
+import {recordingLine} from './duplicates.js';
 export function installPlaylist(client) {
 const env=process.env;
 if (env.SPOTIFY_PLAYLIST_ENABLED !== 'true') return;
@@ -40,6 +41,25 @@ function propose(source,action,candidates,userId,possible=false,cacheable=false)
  const lines=candidates.map((t,index)=>`${index+1}. ${t.name} — ${(t.artists||[]).map(a=>a.name).join(', ')} (${Math.floor(t.duration_ms/60000)}:${String(Math.floor(t.duration_ms/1000)%60).padStart(2,'0')})\nhttps://open.spotify.com/track/${t.id}`);
  return {content:`${possible?'Possible matches—please check. ':''}Choose the Spotify recording to ${action==='add'?'add':'remove'}. Nothing has changed yet. Only you can confirm; expires in 2 minutes.\n${lines.join('\n')}`.slice(0,1950),components};
 }
+function proposeDuplicate(warning,userId,source,cacheable) {
+ const nonce=randomBytes(12).toString('hex');
+ choices.set(nonce,{duplicate:true,userId,source,cacheable,id:warning.proposed.id,
+   approvedDuplicates:warning.existing.map(t=>t.id),expires:Date.now()+120000});
+ const timer=setTimeout(()=>choices.delete(nonce),120000);timer.unref();
+ const lines=warning.existing.slice(0,3).map(recordingLine);
+ const more=warning.existing.length>3?`\n${warning.existing.length-3} more similar entries.`:'';
+ const content=`This may already be in the playlist.\nExisting:\n${lines.join('\n')}${more}\nProposed:\n${recordingLine(warning.proposed)}\nNothing changed. Only you can confirm; expires in 2 minutes.`;
+ return {content,components:[new ActionRowBuilder().addComponents(
+   new ButtonBuilder().setCustomId(`plduplicate:${nonce}:add`).setLabel('Add anyway').setStyle(ButtonStyle.Primary),
+   new ButtonBuilder().setCustomId(`plduplicate:${nonce}:cancel`).setLabel('Cancel').setStyle(ButtonStyle.Secondary))]};
+}
+async function editSelection(action,id,userId,source,cacheable=false,approvedDuplicates=[]) {
+ const result=await editor.edit(action,id,false,approvedDuplicates);
+ if(result.duplicateWarning)return proposeDuplicate(result.duplicateWarning,userId,source,cacheable);
+ // A refusal or warning must not persist a source mapping.
+ if(cacheable && /^(Added|Removed) /.test(result))resolver.remember(source,id);
+ return result;
+}
 async function run(action,argument,reference,selected,userId){
  if(!ready)throw Error('Bot is still connecting to Spotify.');
  if(action==='playlist')return playlistUrl;if(action==='help')return help;if(action==='undo')return editor.undo();
@@ -53,7 +73,7 @@ async function run(action,argument,reference,selected,userId){
  const result=await resolver.resolve(source,action);
  if(result.message)return result.message;
  if(result.candidates)return propose(source,action,result.candidates,userId,result.possible,result.cacheable);
- return editor.edit(action,result.id);
+ return editSelection(action,result.id,userId,source);
 }
 client.once(Events.ClientReady,async c=>{
  try{
@@ -85,9 +105,21 @@ client.on(Events.MessageCreate,async m=>{
 });
 client.on(Events.MessageUpdate,async(_old,m)=>{try{if(m.partial)m=await m.fetch();live.observe(m);}catch{}});
 client.on(Events.InteractionCreate,async i=>{
+ if(i.isButton() && i.customId.startsWith('plduplicate:')) {
+  const [,nonce,action]=i.customId.split(':');const choice=choices.get(nonce);
+  if(!choice?.duplicate || choice.expires<Date.now()){await i.reply({content:'This selection expired. Run the command again.',flags:MessageFlags.Ephemeral});return;}
+  if(i.user.id!==choice.userId || !isPlaylistChannel(i.guildId,i.channelId)){await i.reply({content:'Only the person who requested this match can choose it.',flags:MessageFlags.Ephemeral});return;}
+  if(!['add','cancel'].includes(action))return;
+  choices.delete(nonce);await i.deferUpdate();
+  try {
+   const result=action==='cancel'?'Cancelled. Nothing changed.':await serialize(()=>editSelection('add',choice.id,i.user.id,choice.source,choice.cacheable,choice.approvedDuplicates));
+   await i.editReply({...payload(result),allowedMentions:{parse:[]}});
+  }catch(e){await i.editReply({content:e.message,components:[],allowedMentions:{parse:[]}});}
+  return;
+ }
  if(i.isButton() && i.customId.startsWith('plmatch:')){
   const [,nonce,index]=i.customId.split(':');const choice=choices.get(nonce);
-  if(!choice || choice.expires<Date.now()){await i.reply({content:'This selection expired. Run the command again.',flags:MessageFlags.Ephemeral});return;}
+  if(!choice || choice.duplicate || choice.expires<Date.now()){await i.reply({content:'This selection expired. Run the command again.',flags:MessageFlags.Ephemeral});return;}
   if(i.user.id!==choice.userId || !isPlaylistChannel(i.guildId,i.channelId)){await i.reply({content:'Only the person who requested this match can choose it.',flags:MessageFlags.Ephemeral});return;}
   if(index!=='cancel' && !choice.candidates[Number(index)])return;
   // Consume before awaiting any network call, so double clicks cannot write twice.
@@ -96,9 +128,9 @@ client.on(Events.InteractionCreate,async i=>{
    let content='Cancelled. Nothing changed.';
    if(index!=='cancel'){
     const track=choice.candidates[Number(index)];
-    content=await serialize(async()=>{const result=await editor.edit(choice.action,track.id);if(choice.cacheable)resolver.remember(choice.source,track.id);return result;});
+    content=await serialize(()=>editSelection(choice.action,track.id,i.user.id,choice.source,choice.cacheable));
    }
-   await i.editReply({content,components:[],allowedMentions:{parse:[]}});
+   await i.editReply({...payload(content),allowedMentions:{parse:[]}});
   }catch(e){await i.editReply({content:e.message,components:[],allowedMentions:{parse:[]}});}
   return;
  }

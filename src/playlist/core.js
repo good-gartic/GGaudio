@@ -1,3 +1,4 @@
+import {duplicateRecording,recordingLine} from './duplicates.js';
 export function trackIds(text = '') {
   const matches = text.matchAll(/(?:https:\/\/open\.spotify\.com\/(?:intl-[a-zA-Z-]+\/)?track\/|spotify:track:)([A-Za-z0-9]{22})(?![A-Za-z0-9])/g);
   return [...new Set([...matches].map(m => m[1]))];
@@ -58,14 +59,25 @@ export function announcement(m, now = Date.now()) {
     messageId: m.id, botId: m.author.id, at, expires: at + seconds * 1000};
 }
 export class PlaylistEditor {
-  constructor(api, state, save) { this.api = api; this.state = state; this.save = save; }
-  async edit(action, id, undo = false) {
+  constructor(api, state, save) { this.api = api; this.state = state; this.save = save; this.queue=Promise.resolve(); }
+  serialize(fn) {const result=this.queue.then(fn);this.queue=result.catch(()=>{});return result;}
+  edit(action,id,undo=false,approvedDuplicates=[]) {
+    return this.serialize(()=>this.performEdit(action,id,undo,approvedDuplicates));
+  }
+  async performEdit(action, id, undo = false, approvedDuplicates=[]) {
     if (this.state.pending) throw Error('An earlier Spotify change has an uncertain outcome. Restart to reconcile it before editing.');
     const before = await this.api.snapshot();
     let count = before.uris.filter(u => u === `spotify:track:${id}`).length;
     if (undo && before.snapshot !== this.state.undo?.snapshot) throw Error('The playlist changed after that action; undo has been refused.');
     if (action === 'add' && count) return 'Already in the playlist.';
     if (action === 'delete' && !count) return 'That song is not in the playlist.';
+    if(action==='add' && !undo) {
+      const proposed=await this.api.track(id);
+      const duplicate=duplicateRecording(proposed,before.tracks);
+      if(duplicate.exact)return `Already in the playlist (same recording):\n${recordingLine(duplicate.exact)}`;
+      if(duplicate.similar.some(track=>!approvedDuplicates.includes(track.id)))
+        return {duplicateWarning:{proposed,existing:duplicate.similar}};
+    }
     const amount = undo ? (this.state.undo.count || 1) : 1;
     if (amount > 100) throw Error('Undo would restore more than 100 duplicate copies; restore these manually in Spotify.');
     const pending = {action, id, count: action === 'delete' ? count : amount,
@@ -87,9 +99,12 @@ export class PlaylistEditor {
     }
     this.state.pending = null; this.save();
   }
-  async undo() {
-    const last = this.state.undo;
-    if (!last) return 'Nothing to undo.';
-    return this.edit(last.action, last.id, true);
+  undo() {
+    return this.serialize(()=>{
+      const last = this.state.undo;
+      if (!last) return 'Nothing to undo.';
+      // Restore an intentional deletion exactly, including prior duplicates.
+      return this.performEdit(last.action,last.id,true);
+    });
   }
 }
