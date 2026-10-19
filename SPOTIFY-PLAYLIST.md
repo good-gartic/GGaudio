@@ -40,9 +40,9 @@ All members with access to the configured channel can edit and undo the last sha
 
 ## Limitations
 
-Jockie's queue is independent of the saved playlist. Deleting does not skip or remove an already queued track. YouTube links and title matching are not implemented in this version.
+Jockie's queue is independent of the saved playlist. Deleting does not skip or remove an already queued track. Raw non-Spotify links alone are not accepted. Reply to a Jockie announcement or use a fresh announcement in your voice channel for cross-source matching.
 
-The module reads announcements rather than a Jockie playback API. It requires Started playing, a single Spotify track link, and Length/Duration. Expiry uses the announced duration. Pauses may expire early, and a stopped track can remain selectable until expiry if Jockie stays in voice. Explicit links and replies select a known song. Restart clears announcement memory until the next announcement; voice channel changes clear that bot's current track.
+The module reads announcements rather than a Jockie playback API. It requires Started playing, a Spotify track link or a Playing field containing a source link, title and artist, plus Length/Duration. The Started playing label can be in the embed author or title. Expiry uses the announced duration. Pauses may expire early, and a stopped track can remain selectable until expiry if Jockie stays in voice. Explicit links and replies select a known song. Restart clears announcement memory until the next announcement; voice channel changes clear that bot's current track.
 
 Writes are serialized within one instance. Keep one running copy. Avoid external edits while issuing commands; API writes do not support full compare-and-swap isolation. Undo checks the playlist snapshot. If a write times out, playlist writes stop until restart reconciliation compares before/expected contents. Conflicting external edits cause the playlist module to refuse startup. Inspect the real playlist and pending journal before manually clearing `pending` in `data/spotify-playlist/state.json`. Existing Minecraft features keep running.
 
@@ -62,3 +62,16 @@ Official Spotify API documentation:
 - https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
 - https://developer.spotify.com/documentation/web-api/reference/add-items-to-playlist
 - https://developer.spotify.com/documentation/web-api/reference/remove-items-playlist
+
+
+## Cross-source matching update
+
+Jockie announcements from Deezer, Apple Music, Tidal, SoundCloud, YouTube and other sources can be parsed using their common title/artist/duration fields. This does not mean every source track exists on Spotify or every custom announcement format is supported. No audio is fetched or converted.
+
+Direct Spotify IDs remain immediate. Other-source tracks use a previously confirmed source mapping or present up to five Spotify candidates with Choose buttons. Nothing changes before confirmation. Only the requester may confirm; choices expire after two minutes and are single-use. Slash-command choices stay private. A change of playing song does not change the song selected by an already-issued confirmation prompt.
+
+For additions, Deezer metadata ISRC lookup is attempted on the fixed api.deezer.com host with a five-second timeout, then Spotify ISRC search. Missing/unavailable Deezer metadata falls back to Spotify artist/title search. Other sources use announcement metadata without fetching their URLs. Candidates must match normalized title and artist closely; duration ranks candidates, while version labels remain significant. All first-time cross-source matches require confirmation, including ISRC matches.
+
+For deletions, candidates are drawn only from the current managed playlist, rather than the wider Spotify catalogue. Confirmed source URL-to-track-ID mappings are saved in data/spotify-playlist/source-mappings.json, with no contributor IDs. YouTube video and Apple track query identifiers are retained; tracking parameters are discarded. Clear a mistaken mapping in that private local file while the service is stopped, or select an explicit Spotify track link for the immediate action.
+
+These checks use mocked APIs. Live cross-source search and confirmation must be checked on the Pi after deployment. Spotify search access errors are reported without changing the playlist. No new credentials or scopes are required.

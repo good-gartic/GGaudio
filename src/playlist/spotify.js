@@ -39,6 +39,21 @@ export class Spotify {
     }
     throw Error('Playlist is being edited elsewhere. Try again in a moment.');
   }
+  async search(query) {
+    const result = await this.request(`/search?${new URLSearchParams({q:query,type:'track',limit:'10'})}`);
+    return result.tracks?.items || [];
+  }
+  async playlistTracks() {
+    const tracks = [];
+    let offset = 0;
+    while (true) {
+      const page = await this.request(`/playlists/${this.playlistId}/items?limit=50&offset=${offset}`);
+      for (const row of page.items) { const t=row.item || row.track; if(t && !t.is_local) tracks.push(t); }
+      if (!page.next) return tracks;
+      if (!page.items.length) throw Error('Spotify returned invalid pagination.');
+      offset += page.items.length;
+    }
+  }
   async change(action, id, count=1) {
     const uri = `spotify:track:${id}`;
     return this.request(`/playlists/${this.playlistId}/items`, action === 'add' ? 'POST' : 'DELETE',

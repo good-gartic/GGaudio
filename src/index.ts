@@ -485,3 +485,4 @@ if (process.env.SPOTIFY_PLAYLIST_ENABLED === "true") {
 }
 
 client.login(BOT_TOKEN);
+
