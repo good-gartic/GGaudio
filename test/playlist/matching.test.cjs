@@ -52,7 +52,7 @@ test('title-only search uses title then narrow promotional fallback and always c
  const {promotionalFallback}=require('../../dist/playlist/matching.js');
  const source={title:titleOnlyText,titleOnly:true,durationMs:560000,sourceUrl:''};const queries=[];let saves=0;
  const recording={id,name:'Toccata and Fugue in D Minor',artists:[{name:'Actual performer'}],duration_ms:550000,type:'track'};
- const resolver=new TrackResolver({search:async q=>{queries.push(q);return [recording];}}, {'':id},()=>saves++);
+ const resolver=new TrackResolver({search:async q=>{queries.push(q);return q.includes('Best Version Ever')?[]:[recording];}}, {'':id},()=>saves++);
  const result=await resolver.resolve(source,'add');assert.equal(result.id,undefined);assert.equal(result.candidates[0].artists[0].name,'Actual performer');assert.equal(result.candidates[0].duration_ms,550000);
  assert.deepEqual(queries,[`track:"${titleOnlyText}"`,'track:"Toccata and Fugue in D Minor"']);
  resolver.remember(source,id);assert.equal(saves,0);assert.equal(source.artist,undefined);
@@ -116,4 +116,57 @@ test('actual Spotify soundtrack title keeps film context and original display me
  const recording={...track,name:'Main Titles - From "Beetlejuice" Soundtrack',artists:[{name:'Danny Elfman'}],album:{name:'Beetlejuice (Original Motion Picture Soundtrack)'},duration_ms:148426};
  const resolver=new TrackResolver({search:async()=>[recording,{...recording,id:'1JhdTOZUtvSRkBpzEyJD3X',name:recording.name+' - Live'},{...recording,id:'2JhdTOZUtvSRkBpzEyJD3X',album:{name:'Other film'}}]}, {},()=>{});
  assert.deepEqual((await resolver.resolve(a,'add')).candidates,[recording]);
+});
+
+const videoTitle="[SFM FNAF] Five Nights at Freddy's 4 Halloween Song (Halloween at Freddy's) by TryHardNinja";
+const mashTitle='Bobby Pickett Monster Mash';
+function liveExample(title,length){return {id:'example',author:{id:'trusted'},createdTimestamp:1000,embeds:[{title:'Started playing',fields:[{name:'Playing',value:title},{name:'Length',value:length}]}]};}
+const halloween={id,name:"Halloween at Freddy's",artists:[{name:'Tryhardninja'}],duration_ms:178582,type:'track'};
+const mash={id,name:'Monster Mash',artists:[{name:'Bobby "Boris" Pickett'},{name:'The Crypt-Kickers'}],duration_ms:192040,type:'track'};
+test('video parentheses and explicit by attribution survive parser, retrieval and ranking',async()=>{
+ for(const message of [liveExample(videoTitle,'02:55'),{...metadataMessage(videoTitle),content:`Started playing\nPlaying: ${videoTitle}\nLength: 02:55`}]) {
+  const a=announcement(message);assert.equal(a.originalText,videoTitle);assert.equal(a.artist,'TryHardNinja');assert.equal(a.title,videoTitle.replace(/ by TryHardNinja$/,''));
+  const queries=[];let saves=0;
+  const resolver=new TrackResolver({search:async q=>{queries.push(q);return q===`track:"Halloween at Freddy's" artist:"TryHardNinja"`?[halloween,halloween,{...halloween,id:'1JhdTOZUtvSRkBpzEyJD3X',name:halloween.name+' - Remix'},{...halloween,id:'2JhdTOZUtvSRkBpzEyJD3X',artists:[{name:'Unrelated cover artist'}]}]:[];}}, {},()=>saves++);
+  const result=await resolver.resolve(a,'add');assert.deepEqual(result.candidates,[halloween]);assert.equal(result.id,undefined);assert.equal(result.possible,true);assert.equal(result.cacheable,false);assert.equal(queries[0],`track:"${a.title}" artist:"TryHardNinja"`);assert.ok(queries.includes(`track:"Halloween at Freddy's" artist:"TryHardNinja"`));assert.ok(queries.length<=12);assert.equal(result.diagnostics[0].returned,0);assert.ok(result.diagnostics.some(d=>d.accepted===1));resolver.remember(a,id);assert.equal(saves,0);
+ }
+});
+test('unstructured title uses broader full text and returned artist metadata without guessing a split',async()=>{
+ const a=announcement(liveExample(mashTitle,'03:26'));assert.equal(a.artist,undefined);assert.equal(a.title,mashTitle);
+ const queries=[];let saves=0;
+ const resolver=new TrackResolver({search:async q=>{queries.push(q);return q===mashTitle?[mash,mash,{...mash,id:'1JhdTOZUtvSRkBpzEyJD3X',artists:[{name:'Cover Band'}]},{...mash,id:'2JhdTOZUtvSRkBpzEyJD3X',name:'King Cone'},{...mash,id:'3JhdTOZUtvSRkBpzEyJD3X',name:'Monster Mash (Karaoke Version)'}]:[{...mash,id:'4JhdTOZUtvSRkBpzEyJD3X',name:'Monster Mash (Originally Performed by Bobby Pickett) [Karaoke Version]'}];}}, {},()=>saves++);
+ const result=await resolver.resolve(a,'add');assert.deepEqual(result.candidates,[mash]);assert.equal(result.possible,true);assert.equal(result.id,undefined);assert.equal(result.cacheable,false);assert.ok(queries.includes(mashTitle));assert.equal(result.diagnostics[0].returned,1);assert.equal(result.diagnostics[0].accepted,0);assert.ok(result.diagnostics.some(d=>d.stage==='full_text' && d.accepted===1));resolver.remember(a,id);assert.equal(saves,0);assert.equal(a.artist,undefined);assert.equal(a.originalText,mashTitle);
+});
+test('new examples delete only ranked recordings in managed playlist, without catalogue calls',async()=>{
+ for(const [title,length,recording] of [[videoTitle,'02:55',halloween],[mashTitle,'03:26',mash]]) {
+  const a=announcement(liveExample(title,length));const api={playlistTracks:async()=>[recording,recording],search:async()=>{throw Error('catalogue forbidden');}};
+  const resolver=new TrackResolver(api,{},()=>{});assert.deepEqual((await resolver.resolve(a,'delete')).candidates,[recording]);api.playlistTracks=async()=>[];assert.match((await resolver.resolve(a,'delete')).message,/shared Spotify playlist/);
+ }
+});
+test('retrieval failures remain API errors rather than no-match results and stop retries',async()=>{
+ for(const error of [Error('Spotify request failed (403).'),Error('Spotify rate limit: wait 30 seconds.')]) {
+  let calls=0;const resolver=new TrackResolver({search:async()=>{calls++;throw error;}},{},()=>{});
+  await assert.rejects(resolver.resolve(announcement(liveExample(mashTitle,'03:26')),'add'),e=>e===error);assert.equal(calls,1);
+ }
+});
+test('retrieval is bounded and deduplicated even with many ambiguous separators',async()=>{
+ const {searchPlan}=require('../../dist/playlist/matching.js');const a=announcement(metadataMessage('One - Two - Three - Four - Five - Six - Seven - Eight'));
+ const queries=[];const resolver=new TrackResolver({search:async q=>{queries.push(q);return [];}},{},()=>{});const r=await resolver.resolve(a,'add');assert.equal(r.candidates,undefined);assert.ok(queries.length<=12);assert.equal(new Set(queries).size,queries.length);assert.ok(searchPlan(a).some(s=>s.stage==='full_text'));
+});
+test('broader ranking retains conflicting keys, catalogue numbers and version distinctions',async()=>{
+ for(const [title,wrong] of [['Piece in D Minor','Piece in D Major'],['Sonata Op 13','Sonata Op 14'],['Band - Song (Live 2004)','Song (Remix 2004)']]) {
+  const a=announcement(metadataMessage(title));const resolver=new TrackResolver({search:async()=>[{...track,name:wrong}]},{},()=>{});assert.equal((await resolver.resolve(a,'add')).candidates,undefined);
+ }
+});
+test('uncertain linked-source matches are not eligible for remembered mappings',async()=>{
+ const url='https://soundcloud.com/artist/video';const a=announcement({...liveExample(videoTitle,'02:55'),embeds:[{title:'Started playing',fields:[{name:'Playing',value:`[${videoTitle.replace(/ by TryHardNinja$/,'')}](${url}) by TryHardNinja`},{name:'Length',value:'02:55'}]}]});
+ const r=await new TrackResolver({search:async()=>[halloween]},{},()=>{},async()=>null).resolve(a,'add');assert.deepEqual(r.candidates,[halloween]);assert.equal(r.possible,true);assert.equal(r.cacheable,false);
+});
+test('linked unstructured titles use metadata without fetching source URLs',async()=>{
+ const a=announcement({...liveExample(mashTitle,'03:26'),embeds:[{title:'Started playing',fields:[{name:'Playing',value:`[${mashTitle}](https://example.com/video)`},{name:'Length',value:'03:26'}]}]});
+ assert.ok(a);assert.equal(a.artist,undefined);assert.equal(a.title,mashTitle);assert.equal(a.sourceUrl,'https://example.com/video');
+ const resolver=new TrackResolver({search:async()=>[mash]}, {},()=>{},async()=>{throw Error('Title-only source metadata lookup forbidden');});assert.deepEqual((await resolver.resolve(a,'add')).candidates,[mash]);
+});
+test('version words within an attributed artist name are not recording version labels',async()=>{
+ const a=announcement(metadataMessage('Live - Lightning Crashes'));const recording={...track,name:'Lightning Crashes',artists:[{name:'Live'}]};const r=await new TrackResolver({search:async()=>[recording]}, {},()=>{}).resolve(a,'add');assert.deepEqual(r.candidates,[recording]);
 });

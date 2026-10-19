@@ -30,15 +30,15 @@ let queue=Promise.resolve();let ready=false;
 function serialize(fn){const result=queue.then(fn);queue=result.catch(()=>{});return result;}
 const playlistUrl=`https://open.spotify.com/playlist/${env.SPOTIFY_PLAYLIST_ID}`;
 const help=`Shared playlist: ${playlistUrl}\n=add / =delete — use a fresh Jockie announcement in your voice channel.\n=add <Spotify track link> / =delete <Spotify track link> — choose a track explicitly.\nReply to a Jockie announcement with =add or =delete to choose that song.\nPaste one Spotify track link here to add it.\n=undo — undo last edit; removed songs return at the end.\n=playlist — show playlist.\n/playlist — private commands and replies.\nEdits do not change Jockie's loaded queue. Other-source Jockie announcements are matched to Spotify; confirm new matches using the buttons. Raw non-Spotify links alone are not supported.`;
-function propose(source,action,candidates,userId){
+function propose(source,action,candidates,userId,possible=false,cacheable=false){
  const nonce=randomBytes(12).toString('hex');
- choices.set(nonce,{source,action,candidates,userId,expires:Date.now()+120000});
+ choices.set(nonce,{source,action,candidates,userId,cacheable,expires:Date.now()+120000});
  const timer=setTimeout(()=>choices.delete(nonce),120000);timer.unref();
  const buttons=candidates.map((t,index)=>new ButtonBuilder().setCustomId(`plmatch:${nonce}:${index}`).setLabel(`Choose ${index+1}`).setStyle(ButtonStyle.Primary));
  buttons.push(new ButtonBuilder().setCustomId(`plmatch:${nonce}:cancel`).setLabel('Cancel').setStyle(ButtonStyle.Secondary));
  const components=[];for(let n=0;n<buttons.length;n+=5)components.push(new ActionRowBuilder().addComponents(...buttons.slice(n,n+5)));
  const lines=candidates.map((t,index)=>`${index+1}. ${t.name} — ${(t.artists||[]).map(a=>a.name).join(', ')} (${Math.floor(t.duration_ms/60000)}:${String(Math.floor(t.duration_ms/1000)%60).padStart(2,'0')})\nhttps://open.spotify.com/track/${t.id}`);
- return {content:`Choose the Spotify recording to ${action==='add'?'add':'remove'}. Nothing has changed yet. Only you can confirm; expires in 2 minutes.\n${lines.join('\n')}`.slice(0,1950),components};
+ return {content:`${possible?'Possible matches—please check. ':''}Choose the Spotify recording to ${action==='add'?'add':'remove'}. Nothing has changed yet. Only you can confirm; expires in 2 minutes.\n${lines.join('\n')}`.slice(0,1950),components};
 }
 async function run(action,argument,reference,selected,userId){
  if(!ready)throw Error('Bot is still connecting to Spotify.');
@@ -52,7 +52,7 @@ async function run(action,argument,reference,selected,userId){
  if(!source)throw Error('Supply a Spotify track link.');
  const result=await resolver.resolve(source,action);
  if(result.message)return result.message;
- if(result.candidates)return propose(source,action,result.candidates,userId);
+ if(result.candidates)return propose(source,action,result.candidates,userId,result.possible,result.cacheable);
  return editor.edit(action,result.id);
 }
 client.once(Events.ClientReady,async c=>{
@@ -96,7 +96,7 @@ client.on(Events.InteractionCreate,async i=>{
    let content='Cancelled. Nothing changed.';
    if(index!=='cancel'){
     const track=choice.candidates[Number(index)];
-    content=await serialize(async()=>{const result=await editor.edit(choice.action,track.id);resolver.remember(choice.source,track.id);return result;});
+    content=await serialize(async()=>{const result=await editor.edit(choice.action,track.id);if(choice.cacheable)resolver.remember(choice.source,track.id);return result;});
    }
    await i.editReply({content,components:[],allowedMentions:{parse:[]}});
   }catch(e){await i.editReply({content:e.message,components:[],allowedMentions:{parse:[]}});}

@@ -29,17 +29,19 @@ export function announcement(m, now = Date.now()) {
   const split = clean.match(/^(.+?)\s+by\s+(.+)$/i);
   let interpretations;
   let title = split?.[1]?.trim(), artist = split?.[2]?.trim(), titleOnly = false;
-  if (!ids.length && !sourceUrl) {
+  if (!ids.length && (!sourceUrl || (!split && playing))) {
     // Preserve the text and treat spaced separators as search hypotheses only.
     const parts = clean.replace(/\.(?:mp3|mp4|m4a|m4v|wav|flac|ogg|opus|webm|aac|wma|aiff|alac|avi|mkv)$/i, '').trim().split(/\s+-\s+/);
     if (parts.some(part => !part.trim()) || /(?:^-\s|\s-$)/.test(parts.join(' - '))) return null;
     if (parts.length === 1 && !playing && !/\nplaying\s*(?::|\n)/i.test(text)) return null;
-    if (parts.length === 1) { title = parts[0].trim(); artist = undefined; titleOnly = true; }
+    if (split && parts.length === 1) { title = split[1].trim(); artist = split[2].trim(); }
+    else if (parts.length === 1) { title = parts[0].trim(); artist = undefined; titleOnly = true; }
     else [artist, title] = [parts[0], parts.slice(1).join(' - ')];
     interpretations = [];
     const add = (title, artist) => {
       if (!interpretations.some(i => i.title === title && i.artist === artist)) interpretations.push({title, artist});
     };
+    if (split) add(split[1].trim(), split[2].trim());
     if (parts.length <= 8) {
       for (let i = 1; i < parts.length; i++) {
         add(parts.slice(i).join(' - '), parts.slice(0,i).join(' - '));
@@ -47,7 +49,7 @@ export function announcement(m, now = Date.now()) {
       }
       if (parts.length >= 3) add(parts.slice(1,-1).join(' - '), parts.at(-1));
     }
-    add(parts.join(' - '));
+    add(parts.join(' - '), split?.[2]?.trim());
     if (parts.length > 1 && parts.length <= 8 && !/\b(live|remix|version|edit|remaster|mix|instrumental|acoustic)\b/i.test(parts.at(-1))) interpretations.push({title:parts.slice(1).join(' - '),context:parts[0]});
   }
   if (!ids.length && (!title || (!artist && !titleOnly))) return null;

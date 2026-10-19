@@ -25,19 +25,19 @@ test('Spotify startup failure leaves existing client and handlers active',async(
  setup();const original=Spotify.prototype.snapshot;Spotify.prototype.snapshot=async()=>{throw Error('no authorization');};
  try{const client=new EventEmitter();let destroyed=false;client.destroy=()=>{destroyed=true;};const old=()=>{};client.on('minecraft',old);installPlaylist(client);await client.listeners(Events.ClientReady)[0](client);assert.equal(destroyed,false);assert.ok(client.listeners('minecraft').includes(old));}finally{Spotify.prototype.snapshot=original;}
 });
-for(const metadataOnly of [false,true,'title-only'])test(`cross-source confirmation (metadata-only: ${metadataOnly}) is owner-only, channel-restricted and single-use`,async()=>{
+for(const metadataOnly of [false,true,'title-only','unstructured','video-title'])test(`cross-source confirmation (metadata-only: ${metadataOnly}) is owner-only, channel-restricted and single-use`,async()=>{
  setup();process.env.PLAYLIST_CHANNEL_IDS=' voice, music, ,voice ';
  const originals={snapshot:Spotify.prototype.snapshot,search:Spotify.prototype.search,change:Spotify.prototype.change};
  const id='0JhdTOZUtvSRkBpzEyJD3X';let writes=0;
  Spotify.prototype.snapshot=async()=>({uris:[],snapshot:'1'});
- Spotify.prototype.search=async()=>[{id,name:metadataOnly==='title-only'?'Toccata and Fugue in D Minor':metadataOnly?'Mummy':'Ghost Town',artists:[{name:metadataOnly?'GRAVEYARD TRAIN':'Beware Of Darkness'}],duration_ms:metadataOnly?200000:264000,type:'track'}];
+ Spotify.prototype.search=async()=>[{id,name:metadataOnly==='unstructured'?'Monster Mash':metadataOnly==='video-title'?"Halloween at Freddy's":metadataOnly==='title-only'?'Toccata and Fugue in D Minor':metadataOnly?'Mummy':'Ghost Town',artists:[{name:metadataOnly==='unstructured'?'Bobby \"Boris\" Pickett':metadataOnly==='video-title'?'TryHardNinja':metadataOnly?'GRAVEYARD TRAIN':'Beware Of Darkness'}],duration_ms:metadataOnly?200000:264000,type:'track'}];
  Spotify.prototype.change=async()=>{writes++;return {snapshot_id:'2'};};
  try{
   const client=new EventEmitter();client.application={commands:{create:async()=>{}}};installPlaylist(client);await client.listeners(Events.ClientReady)[0](client);
   const sent=[];
-  const reference=metadataOnly?{guildId:'guild',channelId:'jockie',author:{id:'bot',bot:true},createdTimestamp:metadataOnly==='title-only'?Date.now()-1980000:Date.now(),content:metadataOnly==='title-only'?'Started playing\nPlaying: Toccata and Fugue in D Minor (Best Version Ever)\nLength: 09:20':'Started playing\nPlaying: GRAVEYARD TRAIN - Mummy.mp4\nLength: 03:20'}:{guildId:'guild',channelId:'jockie',author:{id:'bot',bot:true},createdTimestamp:Date.now(),embeds:[{title:'Started playing',fields:[{name:'Playing',value:'[Ghost Town](https://music.apple.com/au/album/test/123?i=456) by Beware Of Darkness'},{name:'Length',value:'04:24'}]}]};
+  const reference=metadataOnly?{guildId:'guild',channelId:'jockie',author:{id:'bot',bot:true},createdTimestamp:metadataOnly==='title-only'?Date.now()-1980000:Date.now(),content:metadataOnly==='unstructured'?'Started playing\nPlaying: Bobby Pickett Monster Mash\nLength: 03:26':metadataOnly==='video-title'?"Started playing\nPlaying: [SFM FNAF] Five Nights at Freddy's 4 Halloween Song (Halloween at Freddy's) by TryHardNinja\nLength: 02:55":metadataOnly==='title-only'?'Started playing\nPlaying: Toccata and Fugue in D Minor (Best Version Ever)\nLength: 09:20':'Started playing\nPlaying: GRAVEYARD TRAIN - Mummy.mp4\nLength: 03:20'}:{guildId:'guild',channelId:'jockie',author:{id:'bot',bot:true},createdTimestamp:Date.now(),embeds:[{title:'Started playing',fields:[{name:'Playing',value:'[Ghost Town](https://music.apple.com/au/album/test/123?i=456) by Beware Of Darkness'},{name:'Length',value:'04:24'}]}]};
   await client.listeners(Events.MessageCreate)[0]({guildId:'guild',channelId:'playlist',author:{id:'owner',bot:false},content:'=add',reference:{},fetchReference:async()=>reference,channel:{send:async p=>sent.push(p)}});
-  assert.equal(writes,0);assert.ok(sent[0].components.length);
+  assert.equal(writes,0);assert.ok(sent[0].components.length);if(['unstructured','video-title'].includes(metadataOnly)){assert.match(sent[0].content,/Possible matches.please check/);assert.match(sent[0].content,/open.spotify.com\/track/);}
   const customId=sent[0].components[0].components[0].data.custom_id;
   const handler=client.listeners(Events.InteractionCreate)[0];
   const responses=[];const button=(userId,channelId='music',guildId='guild')=>({isButton:()=>true,customId,user:{id:userId},guildId,channelId,reply:async p=>responses.push(p),deferUpdate:async()=>{},editReply:async p=>responses.push(p)});
