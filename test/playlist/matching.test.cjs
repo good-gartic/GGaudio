@@ -85,7 +85,7 @@ for(const [text,length,name,artist] of [
 ])test(`parser to resolver interpretations: ${text}`,async()=>{
  const a=announcement({id:'m',author:{id:'bot'},createdTimestamp:1000,embeds:[{title:'Started playing',fields:[{name:'Playing',value:text},{name:'Length',value:length}]}]});
  assert.ok(a);assert.equal(a.originalText,text);assert.equal(a.expires,1000+a.durationMs);assert.equal(a.sourceUrl,'');
- const recording={id,name,artists:[{name:artist}],duration_ms:310000,type:'track'};let calls=0,saves=0;
+ const recording={id,name,album:{name:'Beetlejuice'},artists:[{name:artist}],duration_ms:310000,type:'track'};let calls=0,saves=0;
  const api={search:async()=>{calls++;return [recording,recording,{...recording,id:'1JhdTOZUtvSRkBpzEyJD3X',name:name+' (Remix)'}];},playlistTracks:async()=>[recording,recording]};
  const resolver=new TrackResolver(api,{},()=>saves++);
  const result=await resolver.resolve(a,'add');assert.equal(result.id,undefined);assert.deepEqual(result.candidates.map(t=>t.id),[id]);assert.equal(result.candidates[0].duration_ms,310000);assert.equal(result.candidates[0].artists[0].name,artist);
@@ -110,4 +110,10 @@ test('meaningful trailing version labels cannot match the plain recording',async
   const resolver=new TrackResolver({search:async()=>[{...track,name:'Song',artists:[{name:'Band'}]}]}, {},()=>{});
   assert.equal((await resolver.resolve(a,'add')).candidates,undefined);
  }
+});
+test('actual Spotify soundtrack title keeps film context and original display metadata',async()=>{
+ const a=announcement(metadataMessage('Beetlejuice - Main title'));
+ const recording={...track,name:'Main Titles - From "Beetlejuice" Soundtrack',artists:[{name:'Danny Elfman'}],album:{name:'Beetlejuice (Original Motion Picture Soundtrack)'},duration_ms:148426};
+ const resolver=new TrackResolver({search:async()=>[recording,{...recording,id:'1JhdTOZUtvSRkBpzEyJD3X',name:recording.name+' - Live'},{...recording,id:'2JhdTOZUtvSRkBpzEyJD3X',album:{name:'Other film'}}]}, {},()=>{});
+ assert.deepEqual((await resolver.resolve(a,'add')).candidates,[recording]);
 });

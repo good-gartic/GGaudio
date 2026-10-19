@@ -48,7 +48,7 @@ export function announcement(m, now = Date.now()) {
       if (parts.length >= 3) add(parts.slice(1,-1).join(' - '), parts.at(-1));
     }
     add(parts.join(' - '));
-    if (parts.length > 1 && parts.length <= 8 && !/\b(live|remix|version|edit|remaster|mix|instrumental|acoustic)\b/i.test(parts.at(-1))) add(parts.slice(1).join(' - '));
+    if (parts.length > 1 && parts.length <= 8 && !/\b(live|remix|version|edit|remaster|mix|instrumental|acoustic)\b/i.test(parts.at(-1))) interpretations.push({title:parts.slice(1).join(' - '),context:parts[0]});
   }
   if (!ids.length && (!title || (!artist && !titleOnly))) return null;
   const at = m.createdTimestamp || now;

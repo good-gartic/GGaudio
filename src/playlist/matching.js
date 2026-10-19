@@ -57,8 +57,16 @@ export class TrackResolver {
         if(fallback && fallback!==interpretation.title)titles.push(fallback);
         for(const title of titles) {
           const hypothesis={...source,...interpretation,title};
-          const query=`track:"${quote(title)}"`+(interpretation.artist?` artist:"${quote(interpretation.artist)}"`:'');
-          const rank=tracks=>interpretation.artist?rankTracks(hypothesis,tracks):rankTitleOnly(hypothesis,tracks);
+          const query=`track:"${quote(title)}"`+(interpretation.artist?` artist:"${quote(interpretation.artist)}"`:'')+(interpretation.context?` album:"${quote(interpretation.context)}"`:'');
+          const rank=tracks=>{
+            if(interpretation.context) {
+              // Remove only an explicit soundtrack attribution, never a version label.
+              const base=value=>normalized(value.replace(/\s*(?:-\s*)?from\s+["?].+?["?]\s+soundtrack$/i,'')).replace(/\bmain titles\b/g,'main title');
+              const matching=tracks.filter(t=>normalized(t.album?.name).includes(normalized(interpretation.context)) && base(t.name)===base(title));
+              return rankTitleOnly(hypothesis,matching.map(t=>({...t,name:title}))).map(t=>matching.find(original=>original.id===t.id));
+            }
+            return interpretation.artist?rankTracks(hypothesis,tracks):rankTitleOnly(hypothesis,tracks);
+          };
           let candidates=rank(playlist || await this.api.search(query));
           if(!candidates.length && interpretation.artist && !playlist)
             candidates=rank(await this.api.search(`${quote(title)} ${quote(interpretation.artist)}`));
