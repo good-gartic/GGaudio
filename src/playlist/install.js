@@ -1,7 +1,8 @@
+import {LiveAnnouncements} from './live.js';
 import {randomBytes} from 'node:crypto';
 import {TrackResolver} from './matching.js';
 import {Events, SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle} from 'discord.js';
-import {trackIds, messageText, announcement, PlaylistEditor} from './core.js';
+import {trackIds, announcement, PlaylistEditor} from './core.js';
 import {load, save} from './store.js';
 import {Spotify} from './spotify.js';
 export function installPlaylist(client) {
@@ -23,24 +24,12 @@ const mappings=load('source-mappings.json',{});
 const resolver=new TrackResolver(api,mappings,()=>save('source-mappings.json',mappings));
 const choices=new Map();
 const payload=result=>typeof result==='string'?{content:result,components:[]}:result;
-const current=new Map();let queue=Promise.resolve();let ready=false;
+const announcementChannels=new Set([env.JOCKIE_CHANNEL_ID,...(env.JOCKIE_CHANNEL_IDS||'').split(',')].map(x=>x.trim()).filter(Boolean));
+const live=new LiveAnnouncements({guildId:env.GUILD_ID,channels:announcementChannels,trusted,fetchChannel:id=>client.channels.fetch(id)});
+let queue=Promise.resolve();let ready=false;
 function serialize(fn){const result=queue.then(fn);queue=result.catch(()=>{});return result;}
 const playlistUrl=`https://open.spotify.com/playlist/${env.SPOTIFY_PLAYLIST_ID}`;
 const help=`Shared playlist: ${playlistUrl}\n=add / =delete — use a fresh Jockie announcement in your voice channel.\n=add <Spotify track link> / =delete <Spotify track link> — choose a track explicitly.\nReply to a Jockie announcement with =add or =delete to choose that song.\nPaste one Spotify track link here to add it.\n=undo — undo last edit; removed songs return at the end.\n=playlist — show playlist.\n/playlist — private commands and replies.\nEdits do not change Jockie's loaded queue. Other-source Jockie announcements are matched to Spotify; confirm new matches using the buttons. Raw non-Spotify links alone are not supported.`;
-function observe(m){
- if(m.guildId!==env.GUILD_ID||m.channelId!==env.JOCKIE_CHANNEL_ID||!m.author?.bot||!trusted.has(m.author.id))return;
- const parsed=announcement(m);
- if ((current.get(m.author.id)?.at || 0) > (m.createdTimestamp || 0)) return;
- if(parsed)current.set(m.author.id,parsed);
- else if(/started playing/i.test(messageText(m)))current.delete(m.author.id);
-}
-function liveTrack(guild,userId){
- const voice=guild.voiceStates.cache.get(userId)?.channelId;
- if(!voice)throw Error('Join Jockie’s voice channel, supply a Spotify link, or reply to its announcement.');
- const candidates=[...current.values()].filter(t=>t.expires>Date.now()&&guild.voiceStates.cache.get(t.botId)?.channelId===voice);
- if(candidates.length!==1)throw Error('No unambiguous fresh Jockie announcement. Supply an explicit Spotify track link, or reply to a readable announcement.');
- return candidates[0];
-}
 function propose(source,action,candidates,userId){
  const nonce=randomBytes(12).toString('hex');
  choices.set(nonce,{source,action,candidates,userId,expires:Date.now()+120000});
@@ -57,7 +46,7 @@ async function run(action,argument,reference,selected,userId){
  let source=selected;
  if(argument){const ids=trackIds(argument);if(ids.length!==1)throw Error('Supply exactly one full Spotify track link.');source={id:ids[0]};}
  else if(reference){
-  if(reference.guildId!==env.GUILD_ID||reference.channelId!==env.JOCKIE_CHANNEL_ID||!reference.author.bot||!trusted.has(reference.author.id))throw Error('Reply to a trusted Jockie announcement.');
+  if(reference.guildId!==env.GUILD_ID||!announcementChannels.has(reference.channelId)||!reference.author.bot||!trusted.has(reference.author.id))throw Error('Reply to a trusted Jockie announcement.');
   source=announcement(reference);if(!source)throw Error('Could not read that announcement’s track, artist and duration. Supply a Spotify link.');
  }
  if(!source)throw Error('Supply a Spotify track link.');
@@ -77,9 +66,9 @@ client.once(Events.ClientReady,async c=>{
   console.log('Playlist bot ready. Waiting for fresh Jockie announcements.');
  }catch(e){console.error('Playlist feature disabled: '+e.message);}
 });
-client.on(Events.VoiceStateUpdate,(a,b)=>{if(trusted.has(b.id)&&a.channelId!==b.channelId)current.delete(b.id);});
+client.on(Events.VoiceStateUpdate,(a,b)=>live.voiceUpdate(a,b));
 client.on(Events.MessageCreate,async m=>{
- observe(m);
+ live.observe(m);
  if(!isPlaylistChannel(m.guildId,m.channelId)||m.author.bot||m.webhookId)return;
  const match=m.content.trim().match(/^=(add|delete|undo|playlist|help)(?:\s+([\s\S]+))?$/i);const ids=trackIds(m.content);
  if(!match&&!ids.length)return;
@@ -88,13 +77,13 @@ client.on(Events.MessageCreate,async m=>{
   if(!match&&ids.length!==1)throw Error('Post one Spotify track link at a time.');
   if(!match)arg=`spotify:track:${ids[0]}`;
   const reference=m.reference?await m.fetchReference():null;
-  const selected=['add','delete'].includes(action)&&!arg&&!reference?liveTrack(m.guild,m.author.id):null;
+  const selected=['add','delete'].includes(action)&&!arg&&!reference?await live.select(m.guild,m.author.id):null;
   const result=await serialize(()=>run(action,arg,reference,selected,m.author.id));
   await m.channel.send({...payload(result),allowedMentions:{parse:[]}});
   if(env.DELETE_INPUT_MESSAGES==='true')await m.delete().catch(()=>{});
  }catch(e){await m.channel.send({content:e.message,allowedMentions:{parse:[]}}).catch(()=>{});}
 });
-client.on(Events.MessageUpdate,async(_old,m)=>{try{if(m.partial)m=await m.fetch();observe(m);}catch{}});
+client.on(Events.MessageUpdate,async(_old,m)=>{try{if(m.partial)m=await m.fetch();live.observe(m);}catch{}});
 client.on(Events.InteractionCreate,async i=>{
  if(i.isButton() && i.customId.startsWith('plmatch:')){
   const [,nonce,index]=i.customId.split(':');const choice=choices.get(nonce);
@@ -118,7 +107,7 @@ client.on(Events.InteractionCreate,async i=>{
  try{
   if(!isPlaylistChannel(i.guildId,i.channelId))throw Error('Use a configured playlist channel.');
   let action=i.options.getSubcommand();if(action==='link')action='playlist';let arg=i.options.getString('track');
-  const selected=['add','delete'].includes(action)&&!arg?liveTrack(i.guild,i.user.id):null;
+  const selected=['add','delete'].includes(action)&&!arg?await live.select(i.guild,i.user.id):null;
   await i.editReply({...payload(await serialize(()=>run(action,arg,null,selected,i.user.id))),allowedMentions:{parse:[]}});
  }catch(e){await i.editReply({content:e.message,allowedMentions:{parse:[]}});}
 });

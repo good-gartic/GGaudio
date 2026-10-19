@@ -10,7 +10,7 @@ const {installPlaylist}=require('../../dist/playlist/install.js');
 const {Spotify}=require('../../dist/playlist/spotify.js');
 const {Events}=require('discord.js');
 test.after(()=>rmSync(dir,{recursive:true,force:true}));
-function setup(){Object.assign(process.env,{SPOTIFY_PLAYLIST_ENABLED:'true',GUILD_ID:'guild',SPOTIFY_CLIENT_ID:'client',SPOTIFY_PLAYLIST_ID:'6MQbJRLZAdJU8vK7DPbjb9',PLAYLIST_CHANNEL_ID:'playlist',PLAYLIST_CHANNEL_IDS:'',JOCKIE_CHANNEL_ID:'jockie',JOCKIE_BOT_IDS:'bot'});}
+function setup(){Object.assign(process.env,{SPOTIFY_PLAYLIST_ENABLED:'true',GUILD_ID:'guild',SPOTIFY_CLIENT_ID:'client',SPOTIFY_PLAYLIST_ID:'6MQbJRLZAdJU8vK7DPbjb9',PLAYLIST_CHANNEL_ID:'playlist',PLAYLIST_CHANNEL_IDS:'',JOCKIE_CHANNEL_ID:'jockie',JOCKIE_CHANNEL_IDS:'',JOCKIE_BOT_IDS:'bot'});}
 test('disabled adds no listeners',()=>{
  process.env.SPOTIFY_PLAYLIST_ENABLED='false';const client=new EventEmitter();installPlaylist(client);assert.equal(client.eventNames().length,0);
 });
@@ -93,4 +93,22 @@ test('legacy single-channel configuration works without the optional list',async
    assert.equal(sent.length,channelId==='playlist'?1:0);
   }
  }finally{Spotify.prototype.snapshot=original;}
+});
+
+test('bare prefix and private slash recover the same pre-startup announcement as a reply',async()=>{
+ setup();const original={snapshot:Spotify.prototype.snapshot,search:Spotify.prototype.search};
+ const reference={id:'before-startup',guildId:'guild',channelId:'jockie',author:{id:'bot',bot:true},createdTimestamp:Date.now()-10000,content:'Started playing\nPlaying: GRAVEYARD TRAIN - Mummy.mp4\nLength: 03:20'};
+ Spotify.prototype.snapshot=async()=>({uris:[],snapshot:'1'});
+ Spotify.prototype.search=async()=>[{id:'0JhdTOZUtvSRkBpzEyJD3X',name:'Mummy',artists:[{name:'GRAVEYARD TRAIN'}],duration_ms:200000,type:'track'}];
+ try{
+  const client=new EventEmitter();client.application={commands:{create:async()=>{}}};client.channels={fetch:async()=>({guildId:'guild',messages:{fetch:async()=>new Map([[reference.id,reference]])}})};
+  installPlaylist(client);await client.listeners(Events.ClientReady)[0](client);
+  const guild={id:'guild',voiceStates:{cache:new Map([['owner',{channelId:'voice'}],['bot',{channelId:'voice'}]])}};
+  const sent=[],base={guild,guildId:'guild',channelId:'playlist',author:{id:'owner',bot:false},content:'=add',channel:{send:async p=>sent.push(p)}};
+  const onMessage=client.listeners(Events.MessageCreate)[0];
+  await onMessage(base);await onMessage({...base,reference:{},fetchReference:async()=>reference});
+  assert.equal(sent.length,2);for(const result of sent)assert.ok(result.components.length);
+  let reply;await client.listeners(Events.InteractionCreate)[0]({isButton:()=>false,isChatInputCommand:()=>true,commandName:'playlist',guildId:'guild',channelId:'playlist',guild,user:{id:'owner'},options:{getSubcommand:()=> 'add',getString:()=>null},deferReply:async()=>{},editReply:async p=>{reply=p;}});
+  assert.ok(reply.components.length);assert.equal(reply.content,sent[0].content);
+ }finally{Object.assign(Spotify.prototype,original);}
 });
