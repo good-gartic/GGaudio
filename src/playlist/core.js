@@ -27,18 +27,32 @@ export function announcement(m, now = Date.now()) {
   const sourceUrl = urls[0] || '';
   const clean = plain(sourceText).replace(/\s+/g, ' ').trim();
   const split = clean.match(/^(.+?)\s+by\s+(.+)$/i);
+  let interpretations;
   let title = split?.[1]?.trim(), artist = split?.[2]?.trim(), titleOnly = false;
   if (!ids.length && !sourceUrl) {
-    // Only one spaced separator is safe; additional separators may belong to either side.
+    // Preserve the text and treat spaced separators as search hypotheses only.
     const parts = clean.replace(/\.(?:mp3|mp4|m4a|m4v|wav|flac|ogg|opus|webm|aac|wma|aiff|alac|avi|mkv)$/i, '').trim().split(/\s+-\s+/);
-    if (parts.length > 2 || parts.some(part => !part.trim()) || (parts.length === 1 && /(?:^-\s|\s-$)/.test(parts[0]))) return null;
+    if (parts.some(part => !part.trim()) || /(?:^-\s|\s-$)/.test(parts.join(' - '))) return null;
     if (parts.length === 1 && !playing && !/\nplaying\s*(?::|\n)/i.test(text)) return null;
     if (parts.length === 1) { title = parts[0].trim(); artist = undefined; titleOnly = true; }
-    else [artist, title] = parts.map(part => part.trim());
+    else [artist, title] = [parts[0], parts.slice(1).join(' - ')];
+    interpretations = [];
+    const add = (title, artist) => {
+      if (!interpretations.some(i => i.title === title && i.artist === artist)) interpretations.push({title, artist});
+    };
+    if (parts.length <= 8) {
+      for (let i = 1; i < parts.length; i++) {
+        add(parts.slice(i).join(' - '), parts.slice(0,i).join(' - '));
+        add(parts.slice(0,i).join(' - '), parts.slice(i).join(' - '));
+      }
+      if (parts.length >= 3) add(parts.slice(1,-1).join(' - '), parts.at(-1));
+    }
+    add(parts.join(' - '));
+    if (parts.length > 1 && parts.length <= 8 && !/\b(live|remix|version|edit|remaster|mix|instrumental|acoustic)\b/i.test(parts.at(-1))) add(parts.slice(1).join(' - '));
   }
   if (!ids.length && (!title || (!artist && !titleOnly))) return null;
   const at = m.createdTimestamp || now;
-  return {id: ids[0] || null, title, artist, titleOnly, sourceUrl, durationMs: seconds * 1000,
+  return {id: ids[0] || null, title, artist, titleOnly, interpretations, originalText: sourceText, sourceUrl, durationMs: seconds * 1000,
     messageId: m.id, botId: m.author.id, at, expires: at + seconds * 1000};
 }
 export class PlaylistEditor {

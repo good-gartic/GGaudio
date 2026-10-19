@@ -45,9 +45,28 @@ export async function deezerIsrc(source, fetcher=fetch) {
 }
 export class TrackResolver {
   constructor(api, mappings, save, isrcLookup=deezerIsrc){this.api=api;this.mappings=mappings;this.save=save;this.isrcLookup=isrcLookup;}
-  remember(source,id){if(source.titleOnly)return;const key=mappingKey(source);if(key){this.mappings[key]=id;this.save();}}
+  remember(source,id){if(source.titleOnly || source.interpretations)return;const key=mappingKey(source);if(key){this.mappings[key]=id;this.save();}}
   async resolve(source, action){
     if(source.id)return {id:source.id};
+    if(source.interpretations) {
+      const playlist=action==='delete'?await this.api.playlistTracks():null;
+      const quote=value=>value.replace(/["\\]/g,' ').slice(0,150);
+      for(const interpretation of source.interpretations) {
+        const titles=[interpretation.title];
+        const fallback=promotionalFallback(interpretation.title);
+        if(fallback && fallback!==interpretation.title)titles.push(fallback);
+        for(const title of titles) {
+          const hypothesis={...source,...interpretation,title};
+          const query=`track:"${quote(title)}"`+(interpretation.artist?` artist:"${quote(interpretation.artist)}"`:'');
+          const rank=tracks=>interpretation.artist?rankTracks(hypothesis,tracks):rankTitleOnly(hypothesis,tracks);
+          let candidates=rank(playlist || await this.api.search(query));
+          if(!candidates.length && interpretation.artist && !playlist)
+            candidates=rank(await this.api.search(`${quote(title)} ${quote(interpretation.artist)}`));
+          if(candidates.length)return {candidates};
+        }
+      }
+      return {message:action==='delete'?'No matching track found in the shared Spotify playlist. Supply its Spotify link.':'No matching Spotify recording found for this title. Supply an explicit Spotify link.'};
+    }
     if(source.titleOnly) {
       const fallback=promotionalFallback(source.title);
       const titles=[source.title,...(fallback && fallback!==source.title?[fallback]:[])];

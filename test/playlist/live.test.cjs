@@ -21,7 +21,7 @@ test('gateway observation and additional announcement channel use same trust che
  assert.ok(!JSON.stringify(f.logs).includes('Band'));assert.ok(!JSON.stringify(f.logs).includes('Song'));
 });
 test('latest unreadable announcement prevents recovery of an older playable one',async()=>{
- const f=fixture();f.history.push(message(),message({id:'new',createdTimestamp:105000,content:'Started playing\nPlaying: Ambiguous - Song - Live\nLength: 03:20'}));
+ const f=fixture();f.history.push(message(),message({id:'new',createdTimestamp:105000,content:'Started playing\nPlaying: Artist - .mp4\nLength: 03:20'}));
  await assert.rejects(f.live.select(f.guild,'user'),/unreadable_announcement/);
 });
 test('voice isolation and move cutoffs survive history recovery',async()=>{
@@ -54,7 +54,7 @@ test('explicit Spotify announcements are recoverable without changing direct IDs
 test('history ordering and message edits never revive an older announcement',async()=>{
  const f=fixture();f.live.observe(message({id:'new',createdTimestamp:105000}));f.history.push(message());
  assert.equal((await f.live.select(f.guild,'user')).messageId,'new');
- f.live.observe(message({id:'new',createdTimestamp:105000,content:'Started playing\nPlaying: A - B - C\nLength: 03:20'}));
+ f.live.observe(message({id:'new',createdTimestamp:105000,content:'Started playing\nPlaying: Artist - .mp4\nLength: 03:20'}));
  await assert.rejects(f.live.select(f.guild,'user'),/unreadable_announcement/);
 });
 test('voice membership is checked again after the history request',async()=>{

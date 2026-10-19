@@ -25,8 +25,8 @@ test('metadata-only real announcement works in text and embed fields',()=>{
   assert.equal(a.artist,'GRAVEYARD TRAIN');assert.equal(a.title,'Mummy');assert.equal(a.durationMs,200000);assert.equal(a.sourceUrl,'');assert.equal(a.id,null);
  }
 });
-test('metadata filenames preserve title/version text and reject ambiguous splits',()=>{
- for(const value of ['Band - Song - Live.mp4','Artist - Title - Subtitle','Artist - .mp4',' - Title.mp3'])assert.equal(announcement(metadataMessage(value)),null,value);
+test('metadata filenames preserve title/version text and reject empty components',()=>{
+ for(const value of ['Artist - .mp4',' - Title.mp3'])assert.equal(announcement(metadataMessage(value)),null,value);
  for(const [value,title] of [['Band - Song (Live 2004).MP4','Song (Live 2004)'],['Band - Song feat. Guest [Remix].flac','Song feat. Guest [Remix]'],['Band - Song.part2','Song.part2'],['Band - Stand by Me.mp3','Stand by Me']])assert.equal(announcement(metadataMessage(value)).title,title);
 });
 test('metadata-only matching always confirms and never reads or writes an empty URL key',async()=>{
@@ -72,4 +72,42 @@ test('a title-only value still requires a labeled Playing field',()=>{
  assert.equal(announcement({author:{id:'bot'},content:'Started playing\nLength: 09:20'}),null);
  const a=announcement({author:{id:'bot'},createdTimestamp:1000,embeds:[{title:'Started playing',fields:[{name:'Playing',value:titleOnlyText},{name:'Length',value:'09:20'}]}]});
  assert.equal(a.titleOnly,true);assert.equal(a.artist,undefined);
+});
+
+for(const [text,length,name,artist] of [
+ ['Beetlejuice - Main title','02:30','Main Title','Danny Elfman'],
+ ['Labyrinth - Magic Dance - David Bowie','02:35','Magic Dance','David Bowie'],
+ ['Song - Artist','02:35','Song','Artist'],
+ ['Artist - With - Hyphens - Song','02:35','Song','Artist - With - Hyphens'],
+ ['Artist - Song - With - Hyphens','02:35','Song - With - Hyphens','Artist'],
+ ['AC-DC - Song-Name','02:35','Song-Name','AC-DC'],
+ ['Band - Song - Live','02:35','Song - Live','Band']
+])test(`parser to resolver interpretations: ${text}`,async()=>{
+ const a=announcement({id:'m',author:{id:'bot'},createdTimestamp:1000,embeds:[{title:'Started playing',fields:[{name:'Playing',value:text},{name:'Length',value:length}]}]});
+ assert.ok(a);assert.equal(a.originalText,text);assert.equal(a.expires,1000+a.durationMs);assert.equal(a.sourceUrl,'');
+ const recording={id,name,artists:[{name:artist}],duration_ms:310000,type:'track'};let calls=0,saves=0;
+ const api={search:async()=>{calls++;return [recording,recording,{...recording,id:'1JhdTOZUtvSRkBpzEyJD3X',name:name+' (Remix)'}];},playlistTracks:async()=>[recording,recording]};
+ const resolver=new TrackResolver(api,{},()=>saves++);
+ const result=await resolver.resolve(a,'add');assert.equal(result.id,undefined);assert.deepEqual(result.candidates.map(t=>t.id),[id]);assert.equal(result.candidates[0].duration_ms,310000);assert.equal(result.candidates[0].artists[0].name,artist);
+ const before=calls;assert.equal((await resolver.resolve(a,'delete')).candidates[0].id,id);assert.equal(calls,before);
+ resolver.remember(a,id);assert.equal(saves,0);assert.equal(a.originalText,text);
+ api.playlistTracks=async()=>[];assert.match((await resolver.resolve(a,'delete')).message,/shared Spotify playlist/);
+});
+test('alternative searches stop at first successful interpretation',async()=>{
+ const a=announcement(metadataMessage('Band - Song'));
+ let calls=0;const resolver=new TrackResolver({search:async()=>{calls++;return [{...track,name:'Song',artists:[{name:'Band'}]}];}}, {},()=>{});
+ assert.ok((await resolver.resolve(a,'add')).candidates);assert.equal(calls,1);
+});
+test('full hyphenated title fallback does not invent an artist',async()=>{
+ const a=announcement(metadataMessage('Unknown Film - Theme'));
+ const recording={...track,name:'Unknown Film - Theme',artists:[{name:'Actual composer'}]};
+ const resolver=new TrackResolver({search:async()=>[recording]}, {},()=>{});
+ assert.equal((await resolver.resolve(a,'add')).candidates[0].artists[0].name,'Actual composer');
+});
+test('meaningful trailing version labels cannot match the plain recording',async()=>{
+ for(const label of ['Live','Remix','Acoustic Version']) {
+  const a=announcement(metadataMessage(`Band - Song - ${label}`));
+  const resolver=new TrackResolver({search:async()=>[{...track,name:'Song',artists:[{name:'Band'}]}]}, {},()=>{});
+  assert.equal((await resolver.resolve(a,'add')).candidates,undefined);
+ }
 });
