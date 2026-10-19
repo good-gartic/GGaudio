@@ -22,13 +22,19 @@ export function announcement(m, now = Date.now()) {
   if (!length) return null;
   const seconds = Number(length[1] || 0) * 3600 + Number(length[2]) * 60 + Number(length[3]);
   if (!seconds) return null;
-  const sourceText = playing || text.split(/\n(?:length|duration)\b/i)[0].replace(/^[\s\S]*?\nplaying\s*\n/i, '');
+  const sourceText = playing || text.split(/\n(?:length|duration)\b/i)[0].replace(/^[\s\S]*?\nplaying\s*(?::\s*|\n)/i, '');
   const urls = [...sourceText.matchAll(/https?:\/\/[^\s<>"\)]+/g)].map(x => x[0]);
   const sourceUrl = urls[0] || '';
   const clean = plain(sourceText).replace(/\s+/g, ' ').trim();
   const split = clean.match(/^(.+?)\s+by\s+(.+)$/i);
-  const title = split?.[1]?.trim(), artist = split?.[2]?.trim();
-  if (!ids.length && (!sourceUrl || !title || !artist)) return null;
+  let title = split?.[1]?.trim(), artist = split?.[2]?.trim();
+  if (!ids.length && !sourceUrl) {
+    // Only one spaced separator is safe; additional separators may belong to either side.
+    const parts = clean.replace(/\.(?:mp3|mp4|m4a|m4v|wav|flac|ogg|opus|webm|aac|wma|aiff|alac|avi|mkv)$/i, '').trim().split(/\s+-\s+/);
+    if (parts.length !== 2 || parts.some(part => !part.trim())) return null;
+    [artist, title] = parts.map(part => part.trim());
+  }
+  if (!ids.length && (!title || !artist)) return null;
   const at = m.createdTimestamp || now;
   return {id: ids[0] || null, title, artist, sourceUrl, durationMs: seconds * 1000,
     messageId: m.id, botId: m.author.id, at, expires: at + seconds * 1000};

@@ -37,7 +37,7 @@ export class TrackResolver {
   remember(source,id){const key=mappingKey(source);if(key){this.mappings[key]=id;this.save();}}
   async resolve(source, action){
     if(source.id)return {id:source.id};
-    const key=mappingKey(source), cached=this.mappings[key];
+    const key=mappingKey(source), cached=key ? this.mappings[key] : undefined;
     if(/^[A-Za-z0-9]{22}$/.test(cached||''))return {id:cached};
     // For removal, only offer tracks actually in the managed playlist.
     if(action==='delete'){

@@ -38,7 +38,7 @@ function liveTrack(guild,userId){
  const voice=guild.voiceStates.cache.get(userId)?.channelId;
  if(!voice)throw Error('Join Jockie’s voice channel, supply a Spotify link, or reply to its announcement.');
  const candidates=[...current.values()].filter(t=>t.expires>Date.now()&&guild.voiceStates.cache.get(t.botId)?.channelId===voice);
- if(candidates.length!==1)throw Error('No unambiguous fresh Jockie announcement. Supply a Spotify link or reply to its announcement.');
+ if(candidates.length!==1)throw Error('No unambiguous fresh Jockie announcement. Supply an explicit Spotify track link, or reply to a readable announcement.');
  return candidates[0];
 }
 function propose(source,action,candidates,userId){

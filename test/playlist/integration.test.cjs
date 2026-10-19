@@ -25,17 +25,17 @@ test('Spotify startup failure leaves existing client and handlers active',async(
  setup();const original=Spotify.prototype.snapshot;Spotify.prototype.snapshot=async()=>{throw Error('no authorization');};
  try{const client=new EventEmitter();let destroyed=false;client.destroy=()=>{destroyed=true;};const old=()=>{};client.on('minecraft',old);installPlaylist(client);await client.listeners(Events.ClientReady)[0](client);assert.equal(destroyed,false);assert.ok(client.listeners('minecraft').includes(old));}finally{Spotify.prototype.snapshot=original;}
 });
-test('cross-source confirmation is owner-only, channel-restricted and single-use',async()=>{
+for(const metadataOnly of [false,true])test(`cross-source confirmation (metadata-only: ${metadataOnly}) is owner-only, channel-restricted and single-use`,async()=>{
  setup();process.env.PLAYLIST_CHANNEL_IDS=' voice, music, ,voice ';
  const originals={snapshot:Spotify.prototype.snapshot,search:Spotify.prototype.search,change:Spotify.prototype.change};
  const id='0JhdTOZUtvSRkBpzEyJD3X';let writes=0;
  Spotify.prototype.snapshot=async()=>({uris:[],snapshot:'1'});
- Spotify.prototype.search=async()=>[{id,name:'Ghost Town',artists:[{name:'Beware Of Darkness'}],duration_ms:264000,type:'track'}];
+ Spotify.prototype.search=async()=>[{id,name:metadataOnly?'Mummy':'Ghost Town',artists:[{name:metadataOnly?'GRAVEYARD TRAIN':'Beware Of Darkness'}],duration_ms:metadataOnly?200000:264000,type:'track'}];
  Spotify.prototype.change=async()=>{writes++;return {snapshot_id:'2'};};
  try{
   const client=new EventEmitter();client.application={commands:{create:async()=>{}}};installPlaylist(client);await client.listeners(Events.ClientReady)[0](client);
   const sent=[];
-  const reference={guildId:'guild',channelId:'jockie',author:{id:'bot',bot:true},createdTimestamp:Date.now(),embeds:[{title:'Started playing',fields:[{name:'Playing',value:'[Ghost Town](https://music.apple.com/au/album/test/123?i=456) by Beware Of Darkness'},{name:'Length',value:'04:24'}]}]};
+  const reference=metadataOnly?{guildId:'guild',channelId:'jockie',author:{id:'bot',bot:true},createdTimestamp:Date.now(),content:'Started playing\nPlaying: GRAVEYARD TRAIN - Mummy.mp4\nLength: 03:20'}:{guildId:'guild',channelId:'jockie',author:{id:'bot',bot:true},createdTimestamp:Date.now(),embeds:[{title:'Started playing',fields:[{name:'Playing',value:'[Ghost Town](https://music.apple.com/au/album/test/123?i=456) by Beware Of Darkness'},{name:'Length',value:'04:24'}]}]};
   await client.listeners(Events.MessageCreate)[0]({guildId:'guild',channelId:'playlist',author:{id:'owner',bot:false},content:'=add',reference:{},fetchReference:async()=>reference,channel:{send:async p=>sent.push(p)}});
   assert.equal(writes,0);assert.ok(sent[0].components.length);
   const customId=sent[0].components[0].components[0].data.custom_id;

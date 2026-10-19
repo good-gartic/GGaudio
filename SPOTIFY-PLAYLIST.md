@@ -44,7 +44,7 @@ All members with access to an allowed channel can edit and undo the last shared 
 
 Jockie's queue is independent of the saved playlist. Deleting does not skip or remove an already queued track. Raw non-Spotify links alone are not accepted. Reply to a Jockie announcement or use a fresh announcement in your voice channel for cross-source matching.
 
-The module reads announcements rather than a Jockie playback API. It requires Started playing, a Spotify track link or a Playing field containing a source link, title and artist, plus Length/Duration. The Started playing label can be in the embed author or title. Expiry uses the announced duration. Pauses may expire early, and a stopped track can remain selectable until expiry if Jockie stays in voice. Explicit links and replies select a known song. Restart clears announcement memory until the next announcement; voice channel changes clear that bot's current track.
+The module reads announcements rather than a Jockie playback API. It requires Started playing, a Spotify track link or a readable Playing field (linked title/artist or unambiguous `Artist - Title` metadata), plus Length/Duration. The Started playing label can be in the embed author or title. Expiry uses the announced duration. Pauses may expire early, and a stopped track can remain selectable until expiry if Jockie stays in voice. Explicit links and replies select a known song. Restart clears announcement memory until the next announcement; voice channel changes clear that bot's current track.
 
 Writes are serialized within one instance. Keep one running copy. Avoid external edits while issuing commands; API writes do not support full compare-and-swap isolation. Undo checks the playlist snapshot. If a write times out, playlist writes stop until restart reconciliation compares before/expected contents. Conflicting external edits cause the playlist module to refuse startup. Inspect the real playlist and pending journal before manually clearing `pending` in `data/spotify-playlist/state.json`. Existing Minecraft features keep running.
 
@@ -77,3 +77,9 @@ For additions, Deezer metadata ISRC lookup is attempted on the fixed api.deezer.
 For deletions, candidates are drawn only from the current managed playlist, rather than the wider Spotify catalogue. Confirmed source URL-to-track-ID mappings are saved in data/spotify-playlist/source-mappings.json, with no contributor IDs. YouTube video and Apple track query identifiers are retained; tracking parameters are discarded. Clear a mistaken mapping in that private local file while the service is stopped, or select an explicit Spotify track link for the immediate action.
 
 These checks use mocked APIs. Live cross-source search and confirmation must be checked on the Pi after deployment. Spotify search access errors are reported without changing the playlist. No new credentials or scopes are required.
+
+## Metadata-only Jockie announcements
+
+A Playing value such as `GRAVEYARD TRAIN - Mummy.mp4` also works without a URL or separate artist field. The parser removes a recognized trailing audio/video extension and accepts exactly one spaced ` - ` separator as artist then title. Parentheses, version labels and other title text are preserved. Multiple separators or missing artist/title are ambiguous: supply an explicit Spotify track link.
+
+Metadata-only selections use Spotify matching and require requester confirmation before every edit. They are never stored in the source URL mapping cache, so unrelated announcements cannot share an empty URL key. Existing URL-based confirmed mappings continue to work.
