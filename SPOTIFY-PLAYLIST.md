@@ -80,7 +80,7 @@ These checks use mocked APIs. Live cross-source search and confirmation must be 
 
 ## Metadata-only Jockie announcements
 
-A Playing value such as `GRAVEYARD TRAIN - Mummy.mp4` also works without a URL or separate artist field. The parser removes a recognized trailing audio/video extension and accepts exactly one spaced ` - ` separator as artist then title. Parentheses, version labels and other title text are preserved. Multiple separators or missing artist/title are ambiguous: supply an explicit Spotify track link.
+A Playing value such as `GRAVEYARD TRAIN - Mummy.mp4` also works without a URL or separate artist field. The parser removes a recognized trailing audio/video extension and accepts exactly one spaced ` - ` separator as artist then title. Parentheses, version labels and other title text are preserved. Multiple separators or an empty side of a separator are ambiguous: supply an explicit Spotify track link. A Playing title without a separator is handled as title-only metadata.
 
 Metadata-only selections use Spotify matching and require requester confirmation before every edit. They are never stored in the source URL mapping cache, so unrelated announcements cannot share an empty URL key. Existing URL-based confirmed mappings continue to work.
 
@@ -89,3 +89,9 @@ Metadata-only selections use Spotify matching and require requester confirmation
 Bare `=add`/`=delete` and slash commands without a track require the requester and trusted Jockie to share a voice channel. Every attempt refreshes bounded announcement history; unavailable history causes a refusal rather than selecting potentially stale cached playback. Only the latest Started playing message per trusted bot counts, including an unreadable latest message. Recovery never resets playback time to fetch time. No server-wide song fallback is used. If a channel has more than 100 recent messages, older announcements may be unavailable; reply explicitly or supply a Spotify link. Moves during GGaudio downtime and pauses/stops cannot be reconstructed from announcement history; original-duration expiry and current voice membership still apply.
 
 Errors distinguish requester absence, no trusted Jockie in that voice channel, missing announcements, unreadable announcements, pre-move announcements, expiry, multiple fresh candidates and unavailable history. `Playlist live:` logs include reason codes, channel/message/bot IDs, timestamps and voice IDs. Observation also diagnoses untrusted bots and unconfigured announcement channels. No announcement content, song metadata or credentials are logged. A reply selects an explicit announcement and may intentionally use an older song, so reply success does not establish freshness for a bare command.
+
+## Title-only announcements
+
+Trusted Started playing announcements with only a Playing title and Length are accepted without inventing an artist or source. Spotify searches use the original title first; a fallback removes only a whole `(Best Version Ever)` or `[Best Version Ever]` annotation. Keys, catalogue numbers, movements and meaningful version labels remain intact. Candidate titles must match the original or fallback title after normalization; different recordings are ranked by duration and shown with their actual artists and durations. Every title-only add/delete requires requester confirmation and is never cached. Deletions consider only tracks in the managed playlist.
+
+Freshness remains original timestamp plus duration. A 23:41 announcement lasting 09:20 expires at 23:50:20, so bare commands at 00:14 reject it as expired. An explicit reply may select that older song and presents confirmation choices.

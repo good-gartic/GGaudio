@@ -27,16 +27,18 @@ export function announcement(m, now = Date.now()) {
   const sourceUrl = urls[0] || '';
   const clean = plain(sourceText).replace(/\s+/g, ' ').trim();
   const split = clean.match(/^(.+?)\s+by\s+(.+)$/i);
-  let title = split?.[1]?.trim(), artist = split?.[2]?.trim();
+  let title = split?.[1]?.trim(), artist = split?.[2]?.trim(), titleOnly = false;
   if (!ids.length && !sourceUrl) {
     // Only one spaced separator is safe; additional separators may belong to either side.
     const parts = clean.replace(/\.(?:mp3|mp4|m4a|m4v|wav|flac|ogg|opus|webm|aac|wma|aiff|alac|avi|mkv)$/i, '').trim().split(/\s+-\s+/);
-    if (parts.length !== 2 || parts.some(part => !part.trim())) return null;
-    [artist, title] = parts.map(part => part.trim());
+    if (parts.length > 2 || parts.some(part => !part.trim()) || (parts.length === 1 && /(?:^-\s|\s-$)/.test(parts[0]))) return null;
+    if (parts.length === 1 && !playing && !/\nplaying\s*(?::|\n)/i.test(text)) return null;
+    if (parts.length === 1) { title = parts[0].trim(); artist = undefined; titleOnly = true; }
+    else [artist, title] = parts.map(part => part.trim());
   }
-  if (!ids.length && (!title || !artist)) return null;
+  if (!ids.length && (!title || (!artist && !titleOnly))) return null;
   const at = m.createdTimestamp || now;
-  return {id: ids[0] || null, title, artist, sourceUrl, durationMs: seconds * 1000,
+  return {id: ids[0] || null, title, artist, titleOnly, sourceUrl, durationMs: seconds * 1000,
     messageId: m.id, botId: m.author.id, at, expires: at + seconds * 1000};
 }
 export class PlaylistEditor {

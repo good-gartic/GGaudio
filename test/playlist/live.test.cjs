@@ -54,10 +54,18 @@ test('explicit Spotify announcements are recoverable without changing direct IDs
 test('history ordering and message edits never revive an older announcement',async()=>{
  const f=fixture();f.live.observe(message({id:'new',createdTimestamp:105000}));f.history.push(message());
  assert.equal((await f.live.select(f.guild,'user')).messageId,'new');
- f.live.observe(message({id:'new',createdTimestamp:105000,content:'Started playing\nPlaying: unreadable\nLength: 03:20'}));
+ f.live.observe(message({id:'new',createdTimestamp:105000,content:'Started playing\nPlaying: A - B - C\nLength: 03:20'}));
  await assert.rejects(f.live.select(f.guild,'user'),/unreadable_announcement/);
 });
 test('voice membership is checked again after the history request',async()=>{
  const f=fixture();f.live.fetchChannel=async()=>{f.guild.voiceStates.cache.get('bot').channelId='elsewhere';return {guildId:'guild',messages:{fetch:async()=>new Map([['m',message()]])}};};
  await assert.rejects(f.live.select(f.guild,'user'),/no_trusted_jockie_in_voice/);
+});
+
+test('23:41 title-only announcement is expired at 00:14, not unreadable',async()=>{
+ const f=fixture();const at=Date.parse('2026-10-19T23:41:00+10:00');f.time(Date.parse('2026-10-20T00:14:00+10:00'));
+ f.history.push(message({createdTimestamp:at,content:'Started playing\nPlaying: Toccata and Fugue in D Minor (Best Version Ever)\nLength: 09:20'}));
+ await assert.rejects(f.live.select(f.guild,'user'),/announcement_expired/);
+ assert.equal(f.live.latest.get('bot').track.expires,at+560000);
+ f.time(at+10000);assert.equal((await f.live.select(f.guild,'user')).titleOnly,true);
 });

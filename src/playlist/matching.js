@@ -2,6 +2,17 @@ import {plain} from './core.js';
 export function normalized(value='') {
   return plain(value).normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
 }
+// Strip only a whole, clearly promotional annotation. Keep keys, catalogue
+// numbers, movements, performer labels, live/remix and remaster details intact.
+export function promotionalFallback(title='') {
+  return title.replace(/\s*[([]\s*best version ever\s*[)\]]/gi,'').replace(/\s+/g,' ').trim();
+}
+export function rankTitleOnly(source,tracks,title=source.title) {
+  const seen=new Set();
+  return tracks.filter(t=>t && /^[A-Za-z0-9]{22}$/.test(t.id||'') && t.type!=='episode' && !t.is_local &&
+    normalized(t.name)===normalized(title) && !seen.has(t.id) && seen.add(t.id))
+    .sort((a,b)=>Math.abs(a.duration_ms-source.durationMs)-Math.abs(b.duration_ms-source.durationMs)).slice(0,5);
+}
 export function rankTracks(source, tracks) {
   const seen=new Set();
   return tracks.filter(t=>t && /^[A-Za-z0-9]{22}$/.test(t.id||'') && t.type !== 'episode' && !t.is_local && !seen.has(t.id) && seen.add(t.id))
@@ -34,9 +45,22 @@ export async function deezerIsrc(source, fetcher=fetch) {
 }
 export class TrackResolver {
   constructor(api, mappings, save, isrcLookup=deezerIsrc){this.api=api;this.mappings=mappings;this.save=save;this.isrcLookup=isrcLookup;}
-  remember(source,id){const key=mappingKey(source);if(key){this.mappings[key]=id;this.save();}}
+  remember(source,id){if(source.titleOnly)return;const key=mappingKey(source);if(key){this.mappings[key]=id;this.save();}}
   async resolve(source, action){
     if(source.id)return {id:source.id};
+    if(source.titleOnly) {
+      const fallback=promotionalFallback(source.title);
+      const titles=[source.title,...(fallback && fallback!==source.title?[fallback]:[])];
+      const quote=value=>value.replace(/["\\]/g,' ').slice(0,150);
+      // No artist/source is inferred, and every selection is confirmed, never cached.
+      const playlist=action==='delete'?await this.api.playlistTracks():null;
+      for(const title of titles) {
+        const tracks=playlist || await this.api.search('track:"'+quote(title)+'"');
+        const candidates=rankTitleOnly(source,tracks,title);
+        if(candidates.length)return {candidates};
+      }
+      return {message:action==='delete'?'No matching track found in the shared Spotify playlist. Supply its Spotify link.':'No matching Spotify recording found for this title. Supply an explicit Spotify link.'};
+    }
     const key=mappingKey(source), cached=key ? this.mappings[key] : undefined;
     if(/^[A-Za-z0-9]{22}$/.test(cached||''))return {id:cached};
     // For removal, only offer tracks actually in the managed playlist.
