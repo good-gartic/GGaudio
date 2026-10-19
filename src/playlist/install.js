@@ -10,6 +10,8 @@ if (env.SPOTIFY_PLAYLIST_ENABLED !== 'true') return;
 try {
 for(const name of ['GUILD_ID','SPOTIFY_CLIENT_ID','SPOTIFY_PLAYLIST_ID','PLAYLIST_CHANNEL_ID','JOCKIE_CHANNEL_ID','JOCKIE_BOT_IDS']) if(!env[name]) throw Error(`Set ${name} in .env.`);
 if(!/^[A-Za-z0-9]{22}$/.test(env.SPOTIFY_PLAYLIST_ID)) throw Error('SPOTIFY_PLAYLIST_ID must be the 22-character ID.');
+const allowedChannels=new Set([env.PLAYLIST_CHANNEL_ID,...(env.PLAYLIST_CHANNEL_IDS || '').split(',')].map(x=>x.trim()).filter(Boolean));
+const isPlaylistChannel=(guildId,channelId)=>guildId===env.GUILD_ID&&allowedChannels.has(channelId);
 const trusted=new Set(env.JOCKIE_BOT_IDS.split(',').map(x=>x.trim()).filter(Boolean));
 const api=new Spotify(env.SPOTIFY_PLAYLIST_ID,env.SPOTIFY_CLIENT_ID);
 const state=load('state.json',{undo:null,pending:null});
@@ -78,7 +80,7 @@ client.once(Events.ClientReady,async c=>{
 client.on(Events.VoiceStateUpdate,(a,b)=>{if(trusted.has(b.id)&&a.channelId!==b.channelId)current.delete(b.id);});
 client.on(Events.MessageCreate,async m=>{
  observe(m);
- if(m.guildId!==env.GUILD_ID||m.channelId!==env.PLAYLIST_CHANNEL_ID||m.author.bot||m.webhookId)return;
+ if(!isPlaylistChannel(m.guildId,m.channelId)||m.author.bot||m.webhookId)return;
  const match=m.content.trim().match(/^=(add|delete|undo|playlist|help)(?:\s+([\s\S]+))?$/i);const ids=trackIds(m.content);
  if(!match&&!ids.length)return;
  try{
@@ -97,7 +99,7 @@ client.on(Events.InteractionCreate,async i=>{
  if(i.isButton() && i.customId.startsWith('plmatch:')){
   const [,nonce,index]=i.customId.split(':');const choice=choices.get(nonce);
   if(!choice || choice.expires<Date.now()){await i.reply({content:'This selection expired. Run the command again.',flags:MessageFlags.Ephemeral});return;}
-  if(i.user.id!==choice.userId || i.guildId!==env.GUILD_ID || i.channelId!==env.PLAYLIST_CHANNEL_ID){await i.reply({content:'Only the person who requested this match can choose it.',flags:MessageFlags.Ephemeral});return;}
+  if(i.user.id!==choice.userId || !isPlaylistChannel(i.guildId,i.channelId)){await i.reply({content:'Only the person who requested this match can choose it.',flags:MessageFlags.Ephemeral});return;}
   if(index!=='cancel' && !choice.candidates[Number(index)])return;
   // Consume before awaiting any network call, so double clicks cannot write twice.
   choices.delete(nonce);await i.deferUpdate();
@@ -114,7 +116,7 @@ client.on(Events.InteractionCreate,async i=>{
  if(!i.isChatInputCommand()||i.commandName!=='playlist')return;
  await i.deferReply({flags:MessageFlags.Ephemeral});
  try{
-  if(i.guildId!==env.GUILD_ID||i.channelId!==env.PLAYLIST_CHANNEL_ID)throw Error('Use the configured playlist channel.');
+  if(!isPlaylistChannel(i.guildId,i.channelId))throw Error('Use a configured playlist channel.');
   let action=i.options.getSubcommand();if(action==='link')action='playlist';let arg=i.options.getString('track');
   const selected=['add','delete'].includes(action)&&!arg?liveTrack(i.guild,i.user.id):null;
   await i.editReply({...payload(await serialize(()=>run(action,arg,null,selected,i.user.id))),allowedMentions:{parse:[]}});

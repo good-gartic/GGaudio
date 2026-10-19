@@ -4,9 +4,9 @@ The optional playlist module shares GGaudio's existing client and DISCORD_BOT_TO
 
 ## Configure
 
-Requires Node.js 22.12+ (24 recommended). Append the settings from `spotify-playlist.env.example` to the existing `.env`; do not replace the file or change DISCORD_BOT_TOKEN. The playlist ID is prefilled for the user's existing list. Set the Client ID from the Spotify developer app and Discord guild/channel IDs. JOCKIE_BOT_IDS must contain actual Jockie bot user IDs, comma-separated if using multiple bots. Enable Developer Mode in Discord to copy IDs. Both text channels can be the same.
+Requires Node.js 22.12+ (24 recommended). Append the settings from `spotify-playlist.env.example` to the existing `.env`; do not replace the file or change DISCORD_BOT_TOKEN. The playlist ID is prefilled for the user's existing list. Set the Client ID from the Spotify developer app and Discord guild/channel IDs. JOCKIE_BOT_IDS must contain actual Jockie bot user IDs, comma-separated if using multiple bots. Enable Developer Mode in Discord to copy IDs. PLAYLIST_CHANNEL_ID remains required and allowed. Optionally set PLAYLIST_CHANNEL_IDS to additional comma-separated channel IDs; surrounding whitespace, empty entries and duplicates are ignored. Include the designated music text channel and any voice channels whose built-in text chats should accept commands (copy the voice channel ID). JOCKIE_CHANNEL_ID remains the single trusted announcement channel and can also be an allowed playlist channel.
 
-Use `SPOTIFY_PLAYLIST_ENABLED=false` until ready. Enable Message Content Intent in the existing bot's Developer Portal settings (already required by GGaudio). Ensure the bot can view and send in the playlist channel and view/read history in Jockie's announcement channel. The existing installation needs the applications.commands scope for slash commands; reauthorize the same existing bot if needed. No new Discord application or token is required.
+Use `SPOTIFY_PLAYLIST_ENABLED=false` until ready. Enable Message Content Intent in the existing bot's Developer Portal settings (already required by GGaudio). Ensure the bot can view and send in every allowed playlist channel (including voice-channel text chats) and view/read history in Jockie's announcement channel. The existing installation needs the applications.commands scope for slash commands; reauthorize the same existing bot if needed. No new Discord application or token is required.
 
 The Premium account owning the Spotify developer app must authorize access to a playlist it owns. Register exactly `http://127.0.0.1:8888/callback` as a redirect URI. Add the owner to the app's allowed users if required. The bot uses PKCE and never needs a Spotify Client Secret. Other Discord members do not authorize Spotify.
 
@@ -28,7 +28,7 @@ Open the authorization URL printed on the Pi in your Windows browser. After succ
 
 ## Commands
 
-- Post one Spotify track link in PLAYLIST_CHANNEL_ID: add it, with duplicate prevention.
+- Post one Spotify track link in any allowed playlist channel: add it, with duplicate prevention.
 - `=add` / `=delete`: use the last fresh Jockie Started playing announcement from your voice channel. Requires a unique trusted Jockie in that voice channel.
 - `=add <Spotify track link>` / `=delete <Spotify track link>`: select an exact song.
 - Reply to a trusted Jockie announcement with either command to select that announcement explicitly, including an older announcement.
@@ -36,7 +36,9 @@ Open the authorization URL printed on the Pi in your Windows browser. After succ
 - `=playlist` and `=help`.
 - `/playlist add`, `/playlist delete`, `/playlist undo`, `/playlist link`, `/playlist help`: private commands/replies. Optional track parameter accepts a full Spotify link.
 
-All members with access to the configured channel can edit and undo the last shared change. No contributor IDs are persisted. Typed commands and pasted links remain visible; slash commands are preferable for anonymity. DELETE_INPUT_MESSAGES=true attempts to delete successful inputs and requires Manage Messages; deletion is not guaranteed anonymity.
+Prefix commands, pasted Spotify links, private `/playlist` commands and match-confirmation buttons all require the configured guild and an allowed channel. Other channels are ignored for message commands; slash commands and buttons receive private refusals. This allowlist does not change Discord channel permissions or grant access. Jockie announcements are still accepted only from JOCKIE_CHANNEL_ID and trusted JOCKIE_BOT_IDS.
+
+All members with access to an allowed channel can edit and undo the last shared change. No contributor IDs are persisted. Typed commands and pasted links remain visible; slash commands are preferable for anonymity. DELETE_INPUT_MESSAGES=true attempts to delete successful inputs and requires Manage Messages; deletion is not guaranteed anonymity.
 
 ## Limitations
 
@@ -54,7 +56,7 @@ To disable the integration, set SPOTIFY_PLAYLIST_ENABLED=false and restart the e
 npm run test:playlist
 ```
 
-Tests cover parsing the user's supplied announcement, duplicate prevention, undo, external-edit refusal, uncertain-write recovery, endpoint payloads, pagination, disabled initialization, command registration and Spotify failure isolation. Live OAuth, Discord embeds and Spotify writes need acceptance testing with the actual account. First exercise add/delete/undo with a disposable song, then verify Minecraft status and channel visibility still operate.
+Tests cover parsing the user's supplied announcement, duplicate prevention, undo, external-edit refusal, uncertain-write recovery, endpoint payloads, pagination, disabled initialization, command registration, allowed/disallowed channels across playlist entry points, and Spotify failure isolation. Live OAuth, Discord embeds and Spotify writes need acceptance testing with the actual account. First exercise add/delete/undo with a disposable song, then verify Minecraft status and channel visibility still operate.
 
 The integration is based on fix-voice-detection commit 507827f. Before deploying, compare the Pi's working tree and commit with that base: the Pi may contain unpushed changes. Never overwrite an existing Pi checkout or copy the old standalone project's .env over GGaudio's .env.
 
