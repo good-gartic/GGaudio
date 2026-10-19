@@ -11,7 +11,7 @@ This is a **Discord bot** built using **TypeScript** and `discord.js`. It provid
 ### **1. Clone the Repository**
 
 ```sh
-git clone https://github.com/bouncingmolar/GGaudio.git
+git clone https://github.com/good-gartic/GGaudio.git
 cd GGaudio
 ```
 
