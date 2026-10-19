@@ -1,8 +1,10 @@
 {
   "scripts": {
-  "start": "npx tsc && node dist/index.js",
-  "build": "npx tsc",
-  "dev": "ts-node src/index.ts"
+    "start": "npx tsc && node dist/index.js",
+    "build": "npx tsc",
+    "dev": "ts-node src/index.ts",
+    "spotify:authorize": "node -r dotenv/config dist/playlist/authorize.js",
+    "test:playlist": "npm run build && node --test test/playlist/*.test.cjs"
   },
   "dependencies": {
     "discord.js": "^14.16.3",

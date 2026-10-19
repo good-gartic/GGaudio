@@ -474,4 +474,14 @@ client.on('voiceStateUpdate', (oldState, newState) => {
     }
 });
 
+// Optional playlist module shares the existing Discord client and token.
+if (process.env.SPOTIFY_PLAYLIST_ENABLED === "true") {
+    try {
+        const { installPlaylist } = require("./playlist/install");
+        installPlaylist(client);
+    } catch (error) {
+        console.error("Playlist feature failed to load; existing features remain active.");
+    }
+}
+
 client.login(BOT_TOKEN);
