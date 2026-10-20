@@ -84,6 +84,7 @@ export class PlaylistEditor {
       before: before.uris, expected: action === 'delete' ? before.uris.filter(u => u !== `spotify:track:${id}`) : [...before.uris, ...Array(amount).fill(`spotify:track:${id}`)], undo};
     this.state.pending = pending; this.save();
     const result = await this.api.change(action, id, amount);
+    if(!result?.snapshot_id)throw Error('Spotify did not confirm the playlist snapshot. The change has an uncertain outcome; restart to reconcile before editing.');
     this.state.undo = undo ? null : {action: action === 'add' ? 'delete' : 'add', id, count: pending.count, snapshot: result.snapshot_id};
     this.state.pending = null; this.save();
     return `${undo ? 'Undid the last change: ' : ''}${action === 'add' ? 'Added' : 'Removed'} https://open.spotify.com/track/${id}${action === 'delete' && count > 1 ? ` (${count} copies)` : ''}.`;
