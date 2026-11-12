@@ -39,6 +39,7 @@ export class Spotify {
     let t;try{t=await r.json();}catch{throw new SpotifyError('Spotify returned an unreadable authentication response. Try again later.','response');}
     if(typeof t?.access_token!=='string' || !t.access_token || !Number.isFinite(t.expires_in))throw new SpotifyError('Spotify returned invalid authentication metadata. Try again later.','response');
     if (t.refresh_token) save('spotify-token.json', {refresh_token:t.refresh_token});
+    this.scopes=new Set(typeof t.scope==='string'?t.scope.split(/\s+/):[]);
     this.token = t.access_token; this.expires = this.now() + (t.expires_in - 60) * 1000;
     return this.token;
   }
@@ -71,6 +72,24 @@ export class Spotify {
       if(!read)error.message+=' The playlist change has an uncertain outcome; edits remain paused until restart reconciliation.';
       throw error;
     }
+  }
+  async playlistInfo(id=this.playlistId) {
+    if(!/^[A-Za-z0-9]{22}$/.test(id))throw Error('Invalid Spotify playlist ID.');
+    const info=await this.request(`/playlists/${id}`);
+    if(info?.id!==id || !info.name || !info.owner?.id)throw Error('Spotify playlist metadata is unavailable.');
+    return info;
+  }
+  async verifyEditablePlaylist(id) {
+    const info=await this.playlistInfo(id);
+    const account=await this.request('/me');
+    // Ownership is verifiable without probing write endpoints. A collaborative
+    // flag alone does not prove this account has been invited as a collaborator.
+    if(!account?.id || info.owner.id!==account.id)throw Error('Choose a playlist owned by the authorized Spotify account; edit eligibility could not be verified.');
+    const required=info.public===true?['playlist-modify-public']:info.public===false?['playlist-modify-private']:['playlist-modify-public','playlist-modify-private'];
+    if(required.some(scope=>!this.scopes?.has(scope)))throw Error('Spotify edit scopes could not be verified. Reauthorize with npm run spotify:authorize.');
+    const page=await this.request(`/playlists/${id}/items?limit=1`);
+    if(!Array.isArray(page?.items))throw Error('Spotify playlist contents are not accessible.');
+    return info;
   }
   async snapshot() {
     // Retry reads if another client edits the playlist while we paginate it.

@@ -1,8 +1,9 @@
+import {PlaylistSelection, playlistId, requireModerator} from './selection.js';
 import {LiveAnnouncements} from './live.js';
 import {randomBytes} from 'node:crypto';
 import {TrackResolver} from './matching.js';
 import {Events, SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle} from 'discord.js';
-import {trackIds, announcement, PlaylistEditor} from './core.js';
+import {trackIds, announcement} from './core.js';
 import {load, save} from './store.js';
 import {Spotify} from './spotify.js';
 import {recordingLine} from './duplicates.js';
@@ -16,24 +17,21 @@ const allowedChannels=new Set([env.PLAYLIST_CHANNEL_ID,...(env.PLAYLIST_CHANNEL_
 const isPlaylistChannel=(guildId,channelId)=>guildId===env.GUILD_ID&&allowedChannels.has(channelId);
 const trusted=new Set(env.JOCKIE_BOT_IDS.split(',').map(x=>x.trim()).filter(Boolean));
 const api=new Spotify(env.SPOTIFY_PLAYLIST_ID,env.SPOTIFY_CLIENT_ID);
-const state=load('state.json',{undo:null,pending:null});
-if(state.playlistId && state.playlistId!==env.SPOTIFY_PLAYLIST_ID) throw Error('state.json belongs to a different playlist; archive it before changing playlists.');
-state.playlistId=env.SPOTIFY_PLAYLIST_ID;
-save('state.json',state);
-const editor=new PlaylistEditor(api,state,()=>save('state.json',state));
+const selection=new PlaylistSelection(api,env.SPOTIFY_PLAYLIST_ID);
+const editor=selection.editor;
 const mappings=load('source-mappings.json',{});
 const resolver=new TrackResolver(api,mappings,()=>save('source-mappings.json',mappings));
-const choices=new Map();
+const choices=new Map(),switches=new Map();
 const payload=result=>typeof result==='string'?{content:result,components:[]}:result;
 const announcementChannels=new Set([env.JOCKIE_CHANNEL_ID,...(env.JOCKIE_CHANNEL_IDS||'').split(',')].map(x=>x.trim()).filter(Boolean));
 const live=new LiveAnnouncements({guildId:env.GUILD_ID,channels:announcementChannels,trusted,fetchChannel:id=>client.channels.fetch(id)});
 let queue=Promise.resolve();let ready=false;
 function serialize(fn){const result=queue.then(fn);queue=result.catch(()=>{});return result;}
-const playlistUrl=`https://open.spotify.com/playlist/${env.SPOTIFY_PLAYLIST_ID}`;
-const help=`Shared playlist: ${playlistUrl}\n=add / =delete — use a fresh Jockie announcement in your voice channel.\n=add <Spotify track link> / =delete <Spotify track link> — choose a track explicitly.\nReply to a Jockie announcement with =add or =delete to choose that song.\nPaste one Spotify track link here to add it.\n=undo — undo last edit; removed songs return at the end.\n=playlist — show playlist.\n/playlist — private commands and replies.\nEdits do not change Jockie's loaded queue. Other-source Jockie announcements are matched to Spotify; confirm new matches using the buttons. Raw non-Spotify links alone are not supported.`;
+
+const help=()=>`Shared playlist: ${selection.url}\n=add / =delete — use a fresh Jockie announcement in your voice channel.\n=add <Spotify track link> / =delete <Spotify track link> — choose a track explicitly.\nReply to a Jockie announcement with =add or =delete to choose that song.\nPaste one Spotify track link here to add it.\n=undo — undo last edit; removed songs return at the end.\n=playlist — show playlist.\n/playlist — private commands and replies.\nEdits do not change Jockie's loaded queue. Other-source Jockie announcements are matched to Spotify; confirm new matches using the buttons. Raw non-Spotify links alone are not supported.`;
 function propose(source,action,candidates,userId,possible=false,cacheable=false){
  const nonce=randomBytes(12).toString('hex');
- choices.set(nonce,{source,action,candidates,userId,cacheable,expires:Date.now()+120000});
+ choices.set(nonce,{generation:selection.generation,source,action,candidates,userId,cacheable,expires:Date.now()+120000});
  const timer=setTimeout(()=>choices.delete(nonce),120000);timer.unref();
  const buttons=candidates.map((t,index)=>new ButtonBuilder().setCustomId(`plmatch:${nonce}:${index}`).setLabel(`Choose ${index+1}`).setStyle(ButtonStyle.Primary));
  buttons.push(new ButtonBuilder().setCustomId(`plmatch:${nonce}:cancel`).setLabel('Cancel').setStyle(ButtonStyle.Secondary));
@@ -43,7 +41,7 @@ function propose(source,action,candidates,userId,possible=false,cacheable=false)
 }
 function proposeDuplicate(warning,userId,source,cacheable) {
  const nonce=randomBytes(12).toString('hex');
- choices.set(nonce,{duplicate:true,userId,source,cacheable,id:warning.proposed.id,
+ choices.set(nonce,{generation:selection.generation,duplicate:true,userId,source,cacheable,id:warning.proposed.id,
    approvedDuplicates:warning.existing.map(t=>t.id),expires:Date.now()+120000});
  const timer=setTimeout(()=>choices.delete(nonce),120000);timer.unref();
  const lines=warning.existing.slice(0,3).map(recordingLine);
@@ -62,7 +60,7 @@ async function editSelection(action,id,userId,source,cacheable=false,approvedDup
 }
 async function run(action,argument,reference,selected,userId){
  if(!ready)throw Error('Bot is still connecting to Spotify.');
- if(action==='playlist')return playlistUrl;if(action==='help')return help;if(action==='undo')return editor.undo();
+ if(action==='playlist')return selection.url;if(action==='help')return help();if(action==='undo')return editor.undo();
  let source=selected;
  if(argument){const ids=trackIds(argument);if(ids.length!==1)throw Error('Supply exactly one full Spotify track link.');source={id:ids[0]};}
  else if(reference){
@@ -79,6 +77,7 @@ client.once(Events.ClientReady,async c=>{
  try{
   await editor.reconcile();await api.snapshot();
   const cmd=new SlashCommandBuilder().setName('playlist').setDescription('Edit the shared playlist privately');
+  cmd.addSubcommand(s=>s.setName('set').setDescription('Moderator: select the shared Spotify playlist').addStringOption(o=>o.setName('playlist').setDescription('Full Spotify playlist link or ID').setRequired(true)));
   for(const name of ['add','delete'])cmd.addSubcommand(s=>s.setName(name).setDescription(`${name} a track; omit link for Jockie’s song`).addStringOption(o=>o.setName('track').setDescription('Full Spotify track link')));
   for(const name of ['undo','link','help'])cmd.addSubcommand(s=>s.setName(name).setDescription({undo:'Undo last edit',link:'Show playlist',help:'Show usage'}[name]));
   // Upsert only this command; preserve every other GGaudio command.
@@ -105,6 +104,23 @@ client.on(Events.MessageCreate,async m=>{
 });
 client.on(Events.MessageUpdate,async(_old,m)=>{try{if(m.partial)m=await m.fetch();live.observe(m);}catch{}});
 client.on(Events.InteractionCreate,async i=>{
+ if(i.isButton() && i.customId.startsWith('plset:')) {
+  const [,nonce,action]=i.customId.split(':'),choice=switches.get(nonce);
+  if(!choice || choice.expires<Date.now()){await i.reply({content:'This selection expired. Run /playlist set again.',flags:MessageFlags.Ephemeral});return;}
+  if(i.user.id!==choice.userId || !isPlaylistChannel(i.guildId,i.channelId)){await i.reply({content:'Only the requester can confirm in a configured playlist channel.',flags:MessageFlags.Ephemeral});return;}
+  if(!['confirm','cancel'].includes(action))return;
+  switches.delete(nonce);await i.deferUpdate();
+  try {
+   const content=action==='cancel'?'Cancelled. The active playlist is unchanged.':await serialize(async()=>{
+    const info=await selection.switchTo(choice.id,choice.generation,()=>requireModerator(i,env.GUILD_ID));
+    choices.clear();switches.clear();
+    return 'Active playlist: '+info.name+'\n'+selection.url+'\nNo songs were changed.';
+   });
+   await i.editReply({content,components:[],allowedMentions:{parse:[]}});
+  }catch(e){await i.editReply({content:e.message,components:[],allowedMentions:{parse:[]}});}
+  return;
+ }
+
  if(i.isButton() && i.customId.startsWith('plduplicate:')) {
   const [,nonce,action]=i.customId.split(':');const choice=choices.get(nonce);
   if(!choice?.duplicate || choice.expires<Date.now()){await i.reply({content:'This selection expired. Run the command again.',flags:MessageFlags.Ephemeral});return;}
@@ -112,7 +128,7 @@ client.on(Events.InteractionCreate,async i=>{
   if(!['add','cancel'].includes(action))return;
   choices.delete(nonce);await i.deferUpdate();
   try {
-   const result=action==='cancel'?'Cancelled. Nothing changed.':await serialize(()=>editSelection('add',choice.id,i.user.id,choice.source,choice.cacheable,choice.approvedDuplicates));
+   const result=action==='cancel'?'Cancelled. Nothing changed.':await serialize(()=>{selection.assertGeneration(choice.generation);return editSelection('add',choice.id,i.user.id,choice.source,choice.cacheable,choice.approvedDuplicates);});
    await i.editReply({...payload(result),allowedMentions:{parse:[]}});
   }catch(e){await i.editReply({content:e.message,components:[],allowedMentions:{parse:[]}});}
   return;
@@ -128,7 +144,7 @@ client.on(Events.InteractionCreate,async i=>{
    let content='Cancelled. Nothing changed.';
    if(index!=='cancel'){
     const track=choice.candidates[Number(index)];
-    content=await serialize(()=>editSelection(choice.action,track.id,i.user.id,choice.source,choice.cacheable));
+    content=await serialize(()=>{selection.assertGeneration(choice.generation);return editSelection(choice.action,track.id,i.user.id,choice.source,choice.cacheable);});
    }
    await i.editReply({...payload(content),allowedMentions:{parse:[]}});
   }catch(e){await i.editReply({content:e.message,components:[],allowedMentions:{parse:[]}});}
@@ -138,7 +154,25 @@ client.on(Events.InteractionCreate,async i=>{
  await i.deferReply({flags:MessageFlags.Ephemeral});
  try{
   if(!isPlaylistChannel(i.guildId,i.channelId))throw Error('Use a configured playlist channel.');
-  let action=i.options.getSubcommand();if(action==='link')action='playlist';let arg=i.options.getString('track');
+  let action=i.options.getSubcommand();
+  if(action==='set') {
+   await requireModerator(i,env.GUILD_ID);
+   if(!ready)throw Error('Bot is still connecting to Spotify.');
+   const id=playlistId(i.options.getString('playlist'));
+   const result=await serialize(async()=>{
+    await requireModerator(i,env.GUILD_ID);
+    const current=await api.playlistInfo(),proposed=await api.verifyEditablePlaylist(id);
+    const nonce=randomBytes(12).toString('hex');
+    switches.set(nonce,{id,userId:i.user.id,generation:selection.generation,expires:Date.now()+120000});
+    const timer=setTimeout(()=>switches.delete(nonce),120000);timer.unref();
+    return {content:'Current playlist: '+current.name+'\n'+selection.url+'\nProposed playlist: '+proposed.name+'\nhttps://open.spotify.com/playlist/'+id+'\nConfirm within 2 minutes. No songs will be changed.',
+     components:[new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('plset:'+nonce+':confirm').setLabel('Switch playlist').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('plset:'+nonce+':cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary))]};
+   });
+   await i.editReply({...result,allowedMentions:{parse:[]}});return;
+  }
+  if(action==='link')action='playlist';let arg=i.options.getString('track');
   const selected=['add','delete'].includes(action)&&!arg?await live.select(i.guild,i.user.id):null;
   await i.editReply({...payload(await serialize(()=>run(action,arg,null,selected,i.user.id))),allowedMentions:{parse:[]}});
  }catch(e){await i.editReply({content:e.message,allowedMentions:{parse:[]}});}

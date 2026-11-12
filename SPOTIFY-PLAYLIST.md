@@ -48,7 +48,7 @@ The module reads announcements rather than a Jockie playback API. It requires St
 
 Writes are serialized within one instance. Keep one running copy. Avoid external edits while issuing commands; API writes do not support full compare-and-swap isolation. Undo checks the playlist snapshot. If a write times out, playlist writes stop until restart reconciliation compares before/expected contents. Conflicting external edits cause the playlist module to refuse startup. Inspect the real playlist and pending journal before manually clearing `pending` in `data/spotify-playlist/state.json`. Existing Minecraft features keep running.
 
-To disable the integration, set SPOTIFY_PLAYLIST_ENABLED=false and restart the existing service. This does not delete the saved Spotify playlist or token. If changing playlist IDs, archive the old state.json first; the module rejects state from a different playlist. Preserve Minecraft's separate data files.
+To disable the integration, set SPOTIFY_PLAYLIST_ENABLED=false and restart the existing service. This does not delete the saved Spotify playlist or token. Use the moderator-only `/playlist set` command to change the managed playlist. The persisted selection takes precedence over SPOTIFY_PLAYLIST_ID, which supplies the initial fallback. Preserve Minecraft's separate data files.
 
 ## Verification and rollout
 
@@ -119,3 +119,11 @@ Spotify errors distinguish authentication (401 and invalid refresh authorization
 Safe GET/HEAD reads use at most three total API attempts, with 500 ms then 1,000 ms backoff. A short `Retry-After` (seconds or HTTP date) extends the wait; if it exceeds five seconds, the read stops and reports the failure rather than retrying early or blocking the edit queue for a long wait. Read authentication can refresh once within the same three-attempt limit. Refresh-token POSTs are not replayed after a lost response because Spotify may already have rotated the token.
 
 Playlist POST/DELETE mutations are never retried automatically, including after 401, 429, 503, timeout, or an unreadable success response. Failed writes retain the pending journal and previous undo entry. Restart reconciliation checks whether the change happened before allowing more edits. A response without a confirmed playlist snapshot is also treated as uncertain. A failed pre-write read leaves both pending state and undo unchanged; failed reconciliation retains the journal for a later attempt.
+
+## Moderator playlist selection
+
+In an allowed command channel, use `/playlist set playlist:https://open.spotify.com/playlist/6qP3fjM01c23aWacTF5AFx` (a 22-character playlist ID is also accepted). Only members with moderator role `686182824038236231` in the configured guild may invoke or confirm. GGaudio fetches current membership on both steps; removing the role before confirmation refuses the switch. All replies are private. Review the current and proposed playlist names/links and press **Switch playlist** within two minutes. Only the requester can confirm.
+
+The existing Spotify authorization must own the proposed playlist and grant its public/private edit scope. GGaudio checks metadata, account ownership, granted scopes and readable items using read requests only; collaborative status alone is insufficient to prove eligibility. These checks run again on confirmation. No songs or playlists are copied, created, added, removed or deleted during selection.
+
+Switches share the edit queue. Any pending write is reconciled against the old playlist first; unresolved writes refuse the switch. The selected ID and per-playlist undo/pending history are saved together by atomic replacement of `state.json`. Switching back restores that playlist's own undo history. Outstanding match and duplicate-warning buttons are invalidated, including selections already waiting in the queue. Song mappings remain reusable. `=playlist`, `/playlist link` and help display the active selection. `.env` is unchanged and remains the initial fallback, rather than overriding the saved selection on restart.
